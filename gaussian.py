@@ -14,9 +14,44 @@ from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel,ConstantKer
 warnings.filterwarnings("ignore")
 
 ###Hyperparameters
-noise_filter = False #以降はFalseにしておく
-calculate_time = True
-png_name = "Matern"
+noise_filter = False #Must be set to False!!!
+png_name = "const_RBF+white" # Set the name of the output PNG file. PNG files will be saved in the "result" folder.
+
+# Do not change the following two parameters.
+calculate_time = True # Calculate the time of calculation especially about GPR
+test_set_ratio = 0.8 # Must be set to 0.8!!!
+
+### Kernel Setting
+const = ConstantKernel()
+rbf = RBF(0.1, (1e-2, 1e1))
+matern = Matern(length_scale=1.0, nu=1.5)
+exp_sine = ExpSineSquared(length_scale=1.0, periodicity=5.0, periodicity_bounds=(1, 10))
+dot_product = DotProduct(sigma_0=1.0, sigma_0_bounds=(1e-3, 1e3))
+white = WhiteKernel()
+kernel_set = [const, rbf, matern, exp_sine, dot_product, white]
+
+#### Kernel Model Set
+kernel_model = [ConstantKernel(1.0, (1e-3, 1e3)) * DotProduct() + WhiteKernel(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * RBF(0.1, (1e-2, 1e1)) + WhiteKernel(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * RBF(0.1, (1e-2, 1e1)) + WhiteKernel() + ConstantKernel() * DotProduct(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * Matern(nu=1.5) + WhiteKernel(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * Matern(nu=1.5) + WhiteKernel() + ConstantKernel() * DotProduct(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * Matern(nu=0.5) + WhiteKernel(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * Matern(nu=0.5) + WhiteKernel() + ConstantKernel() * DotProduct(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * Matern(nu=2.5) + WhiteKernel(),
+           ConstantKernel(1.0, (1e-3, 1e3)) * Matern(nu=2.5) + WhiteKernel() + ConstantKernel() * DotProduct()]
+#from https://github.com/hkaneko1985/dcekit/blob/master/demo_gp_kernel_design_test.py 
+
+
+# kernel = kernel_model[0]
+kernel = const * rbf 
+
+#### RBF Setting
+# See https://scikit-learn.org/stable/modules/generated/sklearn.gaussian_process.GaussianProcessRegressor.html for further information
+# kernel = default ConstantKernel(1.0, constant_value_bounds="fixed") * RBF(1.0, length_scale_bounds="fixed")
+# alpha : (maybe) adding noise on the training data
+# n_restarts_optimizer: 対数周辺尤度を最大化するための最適化を，異なる初期値から何回再起動するかを設定
+gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=9, alpha=0.1)
 
 # Function to simulate hampel filter (outlier detection and removal)
 def hampel_filter(data, window_size=10, n_sigmas=3):
@@ -91,17 +126,6 @@ else:
   arg_g = arg_g_raw
 G = sys_gain * np.exp(1j * arg_g)
 
-# Plot Bode gain plot (before and after noise removal)
-plt.figure(figsize=(10, 6))
-plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b*', linewidth=1.5, label='Before')
-plt.semilogx(omega, 20*np.log10(sys_gain), 'ro-', linewidth=1.5, label='After')
-plt.xlabel('ω [rad/sec]', fontsize=16)
-plt.ylabel('20*log₁₀|G(jω)|', fontsize=16)
-plt.title('Bode Gain plot', fontsize=16)
-plt.legend(fontsize=12, loc='best')
-plt.grid(True)
-plt.savefig(f"result/{png_name}_modified.png")
-plt.close()
 if calculate_time:
   start  = time.time()
 
@@ -118,23 +142,6 @@ X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.8, random_
 # kernel = C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2))
 # gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=9, alpha=0.1)
 
-# # 代替カーネル1: より複雑なパターンに対応するMaternカーネル
-kernel = ConstantKernel() * RBF() + WhiteKernel()
-gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=9, alpha=0.1)
-
-# # 代替カーネル2: 周期的パターンのためのRBF+Periodicカーネル
-# kernel = C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2)) + ExpSineSquared(1.0, 5.0, periodicity_bounds=(1, 10))
-# gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=9, alpha=0.1)
-
-# 代替カーネル3: 異なるスケールの特性を捉えるRBF+RBF
-# kernel = C(1.0, (1e-3, 1e3)) * RBF(0.1, (1e-2, 1e1)) + C(0.1, (1e-3, 1e3)) * RBF(1.0, (1e-1, 1e2))
-# gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=9, alpha=0.1)
-
-
-
-# # 代替カーネル4: 線形カーネルとRBFの組み合わせ
-# kernel = C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2)) + DotProduct(sigma_0=1.0, sigma_0_bounds=(1e-3, 1e3))
-# gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=9, alpha=0.1)
 gpr.fit(X_train, Y_train)
 
 # Generate finer grid for prediction
