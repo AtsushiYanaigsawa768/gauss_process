@@ -162,28 +162,28 @@ print(f"Training MSE: {mse_train:.4f}")
 print(f"Test MSE: {mse_test:.4f}")
 
 # Plot the GPR results for gain
-plt.figure(figsize=(10, 6))
-# Plot original data points
-plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', markersize=3, alpha=0.5, label='Raw data')
-# Plot training and test data points - convert log values back for consistent plotting
-plt.semilogx(10**X_train, Y_train, 'ro', markersize=6, label='Training data')
-plt.semilogx(10**X_test, Y_test, 'mo', markersize=6, label='Test data')
-# Plot GPR prediction - multiply by 20 for dB scale
-plt.semilogx(omega_fine, Y_pred_fine, 'g-', linewidth=2, label='GPR prediction')
-# Add confidence bounds (±2 standard deviations)
-plt.semilogx(omega_fine, (Y_pred_fine + 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-plt.semilogx(omega_fine, (Y_pred_fine - 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-# Add MSE text to plot
-plt.text(0.05, 0.05, f"Train MSE: {mse_train:.4f}\nTest MSE: {mse_test:.4f}", 
-  transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
+# plt.figure(figsize=(10, 6))
+# # Plot original data points
+# plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', markersize=3, alpha=0.5, label='Raw data')
+# # Plot training and test data points - convert log values back for consistent plotting
+# plt.semilogx(10**X_train, Y_train, 'ro', markersize=6, label='Training data')
+# plt.semilogx(10**X_test, Y_test, 'mo', markersize=6, label='Test data')
+# # Plot GPR prediction - multiply by 20 for dB scale
+# plt.semilogx(omega_fine, Y_pred_fine, 'g-', linewidth=2, label='GPR prediction')
+# # Add confidence bounds (±2 standard deviations)
+# plt.semilogx(omega_fine, (Y_pred_fine + 2*Y_std), 'g--', linewidth=1, alpha=0.5)
+# plt.semilogx(omega_fine, (Y_pred_fine - 2*Y_std), 'g--', linewidth=1, alpha=0.5)
+# # Add MSE text to plot
+# plt.text(0.05, 0.05, f"Train MSE: {mse_train:.4f}\nTest MSE: {mse_test:.4f}", 
+#   transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
 
-plt.xlabel('ω [rad/sec]', fontsize=16)
-plt.ylabel('20*log₁₀|G(jω)| ', fontsize=16)
-plt.title('Bode Gain plot with GPR (Train/Test Split)', fontsize=16)
-plt.legend(fontsize=12, loc='best')
-plt.grid(True)
-plt.savefig(f"result/{png_name}_output.png")
-plt.close()
+# plt.xlabel('ω [rad/sec]', fontsize=16)
+# plt.ylabel('20*log₁₀|G(jω)| ', fontsize=16)
+# plt.title('Bode Gain plot with GPR (Train/Test Split)', fontsize=16)
+# plt.legend(fontsize=12, loc='best')
+# plt.grid(True)
+# plt.savefig(f"result/{png_name}_output.png")
+# plt.close()
 
 # Plot model predictions vs actual values
 plt.figure(figsize=(10, 6))
