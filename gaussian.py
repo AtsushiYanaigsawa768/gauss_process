@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore")
 
 ###Hyperparameters
 noise_filter = False #Must be set to False!!!
-png_name = "const_RBF+white" # Set the name of the output PNG file. PNG files will be saved in the "result" folder.
+png_name = "const_RBF_noise" # Set the name of the output PNG file. PNG files will be saved in the "result" folder.
 
 # Do not change the following two parameters.
 calculate_time = True # Calculate the time of calculation especially about GPR
@@ -89,15 +89,18 @@ def hampel_filter(data, window_size=10, n_sigmas=3):
 
 # Import data
 try:
-  data = np.genfromtxt('result/merged.dat', delimiter=',')
+    data = np.genfromtxt('result/merged.dat', delimiter=',')
 except:
-  # If the file doesn't exist, create some dummy data for illustration
-  print("Data file not found. Creating dummy data for illustration.")
-  omega = np.logspace(-1, 2, 100)
-  sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
-  sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
-  arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
-  data = np.vstack((omega, sys_gain_raw, arg_g_raw))
+    try:
+        data = np.genfromtxt('/root/gauss_process/result/merged.dat', delimiter=',')
+    except:
+        # If the file doesn't exist, create some dummy data for illustration
+        print("Data file not found. Creating dummy data for illustration.")
+        omega = np.logspace(-1, 2, 100)
+        sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
+        sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
+        arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
+        data = np.vstack((omega, sys_gain_raw, arg_g_raw))
   
 # Transpose if necessary to get data in the right shape
 if data.shape[0] == 3:
@@ -162,28 +165,28 @@ print(f"Training MSE: {mse_train:.4f}")
 print(f"Test MSE: {mse_test:.4f}")
 
 # Plot the GPR results for gain
-# plt.figure(figsize=(10, 6))
-# # Plot original data points
-# plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', markersize=3, alpha=0.5, label='Raw data')
-# # Plot training and test data points - convert log values back for consistent plotting
-# plt.semilogx(10**X_train, Y_train, 'ro', markersize=6, label='Training data')
-# plt.semilogx(10**X_test, Y_test, 'mo', markersize=6, label='Test data')
-# # Plot GPR prediction - multiply by 20 for dB scale
-# plt.semilogx(omega_fine, Y_pred_fine, 'g-', linewidth=2, label='GPR prediction')
-# # Add confidence bounds (±2 standard deviations)
-# plt.semilogx(omega_fine, (Y_pred_fine + 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-# plt.semilogx(omega_fine, (Y_pred_fine - 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-# # Add MSE text to plot
-# plt.text(0.05, 0.05, f"Train MSE: {mse_train:.4f}\nTest MSE: {mse_test:.4f}", 
-#   transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
+plt.figure(figsize=(10, 6))
+# Plot original data points
+plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', markersize=3, alpha=0.5, label='Raw data')
+# Plot training and test data points - convert log values back for consistent plotting
+plt.semilogx(10**X_train, Y_train, 'ro', markersize=6, label='Training data')
+plt.semilogx(10**X_test, Y_test, 'mo', markersize=6, label='Test data')
+# Plot GPR prediction - multiply by 20 for dB scale
+plt.semilogx(omega_fine, Y_pred_fine, 'g-', linewidth=2, label='GPR prediction')
+# Add confidence bounds (±2 standard deviations)
+plt.semilogx(omega_fine, (Y_pred_fine + 2*Y_std), 'g--', linewidth=1, alpha=0.5)
+plt.semilogx(omega_fine, (Y_pred_fine - 2*Y_std), 'g--', linewidth=1, alpha=0.5)
+# Add MSE text to plot
+plt.text(0.05, 0.05, f"Train MSE: {mse_train:.4f}\nTest MSE: {mse_test:.4f}", 
+  transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
 
-# plt.xlabel('ω [rad/sec]', fontsize=16)
-# plt.ylabel('20*log₁₀|G(jω)| ', fontsize=16)
-# plt.title('Bode Gain plot with GPR (Train/Test Split)', fontsize=16)
-# plt.legend(fontsize=12, loc='best')
-# plt.grid(True)
-# plt.savefig(f"result/{png_name}_output.png")
-# plt.close()
+plt.xlabel('ω [rad/sec]', fontsize=16)
+plt.ylabel('20*log₁₀|G(jω)| ', fontsize=16)
+plt.title('Bode Gain plot with GPR (Train/Test Split)', fontsize=16)
+plt.legend(fontsize=12, loc='best')
+plt.grid(True)
+plt.savefig(f"result/{png_name}_output.png")
+plt.close()
 
 # Plot model predictions vs actual values
 plt.figure(figsize=(10, 6))
