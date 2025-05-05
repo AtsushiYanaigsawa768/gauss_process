@@ -281,71 +281,54 @@ X = np.log10(omega).reshape(-1, 1)
 Y = np.log10(sys_gain)*20
 
 # Split data into training and test sets (80% test, 20% train)
+X_train, X_test, Y_train, Y_test = train_test_split(
+    X, Y, test_size=0.6, random_state=20
+)
 
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.8, random_state=20)
+# Further split the training set into two halves
+X_tr1, X_tr2, Y_tr1, Y_tr2 = train_test_split(
+    X_train, Y_train, test_size=0.5, random_state=0
+)
 
-model = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=0.01, noise_x=[0.1],k=25)
+# Initialize two NIGP models with the same hyperparameters
+model1 = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=0.01, noise_x=[0.1], k=35)
+model2 = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=0.01, noise_x=[0.1], k=35)
 
-# 学習
-model.fit(X_train, Y_train, iterations=5)
+# Fit both models on their respective subsets
+model1.fit(X_tr1, Y_tr1, iterations=5)
+model2.fit(X_tr2, Y_tr2, iterations=5)
 
-# テストデータに対する予測と訓練データに対する予測を一度に行う
-X_all = np.vstack([X_train, X_test])
-# Predict for training and test data
-mu_train, var_train = model.predict(X_train, Y_train, X_train)
-mu_test, var_test = model.predict(X_train, Y_train, X_test)
+# Predict on the test set with each model
+mu1, var1 = model1.predict(X_tr1, Y_tr1, X_test)
+mu2, var2 = model2.predict(X_tr2, Y_tr2, X_test)
 
-# Calculate MSE for training and test sets
-mse_train = mean_squared_error(Y_train, mu_train)
-mse_test = mean_squared_error(Y_test, mu_test)
-print(f"Training MSE: {mse_train:.4f}")
-print(f"Test MSE: {mse_test:.4f}")
+# Average the predictions
+mu_avg = 0.5 * (mu1 + mu2)
+var_avg = 0.5 * (var1 + var2)
 
-# For timing (optional)
-calculate_time = True
-if calculate_time:
-    start = time.time()
+# Compute MSE on the averaged prediction
+mse_avg = mean_squared_error(Y_test, mu_avg)
+print(f"Averaged Test  MSE: {mse_avg:.4f}")
 
-# Create result directory if it doesn't exist
-os.makedirs("result", exist_ok=True)
-
-# Generate finer grid for prediction
+# (Optional) Plot the averaged prediction on a finer grid
 omega_fine = np.logspace(np.log10(min(omega)), np.log10(max(omega)), 1000)
 X_fine = np.log10(omega_fine).reshape(-1, 1)
+Y_pred1_fine, V1 = model1.predict(X_tr1, Y_tr1, X_fine)
+Y_pred2_fine, V2 = model2.predict(X_tr2, Y_tr2, X_fine)
+Y_pred_avg = 0.5 * (Y_pred1_fine + Y_pred2_fine)
+Y_std_avg  = np.sqrt(0.5 * (V1 + V2))
 
-# Predict using the model
-Y_pred_fine, Y_var_fine = model.predict(X_train, Y_train, X_fine)
-Y_std = np.sqrt(Y_var_fine)
-
-# Define filename for saving
-png_name = "gp_gain_spline_more"
-
-# Plot the GPR results for gain
-plt.figure(figsize=(10, 6))
-# Plot original data points
-plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', markersize=3, alpha=0.5, label='Raw data')
-# Plot training and test data points
-plt.semilogx(10**X_test, Y_test, 'mo', markersize=6, label='Test data')
-plt.semilogx(10**X_train, Y_train, 'ro', markersize=6, label='Training data')
-# Plot GPR prediction
-plt.semilogx(omega_fine, Y_pred_fine, 'g-', linewidth=2, label='GPR prediction')
-# Add confidence bounds (±2 standard deviations)
-plt.semilogx(omega_fine, (Y_pred_fine + 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-plt.semilogx(omega_fine, (Y_pred_fine - 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-# Add MSE text to plot
-plt.text(0.05, 0.05, f"Train MSE: {mse_train:.4f}\nTest MSE: {mse_test:.4f}", 
-  transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
-
-plt.xlabel('ω [rad/sec]', fontsize=16)
-plt.ylabel('20*log₁₀|G(jω)| ', fontsize=16)
-plt.title('Bode Gain plot with GPR (Train/Test Split)', fontsize=16)
-plt.legend(fontsize=12, loc='best')
+plt.figure(figsize=(10,6))
+plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', alpha=0.5, label='Raw data')
+plt.semilogx(10**X_test, Y_test, 'mo', label='Test data')
+plt.semilogx(10**X_train, Y_train, 'ro', label='Train data')
+plt.semilogx(omega_fine, Y_pred_avg, 'g-', label='Averaged GPR')
+plt.semilogx(omega_fine, Y_pred_avg+2*Y_std_avg, 'g--', alpha=0.5)
+plt.semilogx(omega_fine, Y_pred_avg-2*Y_std_avg, 'g--', alpha=0.5)
+plt.text(0.05,0.05,f"Avg Test MSE: {mse_avg:.4f}", transform=plt.gca().transAxes)
+plt.xlabel('ω [rad/sec]')
+plt.ylabel('20*log₁₀|G(jω)|')
+plt.legend()
 plt.grid(True)
-plt.savefig(f"/root/gauss_process/result/{png_name}_output.png")
+plt.savefig(f"/root/gauss_process/result/gp_gain_avg.png")
 plt.close()
-
-
-if calculate_time:
-  end = time.time()
-  elapsed_time = end - start
-  print(f"Elapsed time: {elapsed_time:.2f} seconds")
