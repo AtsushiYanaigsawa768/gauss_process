@@ -328,6 +328,7 @@ plt.semilogx(omega_fine, Y_pred_avg-2*Y_std_avg, 'g--', alpha=0.5)
 plt.text(0.05,0.05,f"Avg Test MSE: {mse_avg:.4f}", transform=plt.gca().transAxes)
 plt.xlabel('ω [rad/sec]')
 plt.ylabel('20*log₁₀|G(jω)|')
+plt.ylim([-100, 0])  # Set y-axis limits
 plt.legend()
 plt.grid(True)
 plt.savefig(f"/root/gauss_process/result/gp_gain_avg.png")
