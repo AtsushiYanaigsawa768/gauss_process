@@ -9,6 +9,11 @@ import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
 
+"""
+paper; Robust Gaussian Process Regression Based on Iterative Trimming
+https://arxiv.org/abs/2011.11057
+github; https://github.com/syrte/robustgp
+"""
 # Import data
 try:
     data = np.genfromtxt('result/merged.dat', delimiter=',')

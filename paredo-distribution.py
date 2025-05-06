@@ -8,13 +8,7 @@ import warnings
 import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
-"""
-paper; 
-Gaussian process regression with Student-t likelihood
-https://papers.nips.cc/paper_files/paper/2009/file/13fe9d84310e77f13a6d184dbf1232f3-Paper.pdf
-Robust Gaussian Process Regression with a Student-t Likelihood
-https://jmlr.org/papers/volume12/jylanki11a/jylanki11a.pdf
-"""
+
 # Import data
 try:
     data = np.genfromtxt('result/merged.dat', delimiter=',')
@@ -63,10 +57,11 @@ X_train, X_test, Y_train, Y_test = train_test_split(
 )
 
 
-# Custom Gaussian Process with Student-t likelihood
-class StudentTGaussianProcess:
-    def __init__(self, nu=3.0, n_restarts_optimizer=25):
-        self.nu = nu  # Degrees of freedom for t-distribution
+# Custom Gaussian Process with Pareto distribution
+class ParetoGaussianProcess:
+    def __init__(self, alpha=1.5, x_min=1.0, n_restarts_optimizer=15):
+        self.alpha = alpha  # Pareto shape parameter (smaller values = heavier tails)
+        self.x_min = x_min  # Minimum value parameter
         self.n_restarts_optimizer = n_restarts_optimizer
         # Use Matern kernel which is more robust
         self.kernel = C(1.0, (1e-3, 1e3)) * RBF(0.1, (1e-2, 1e1))
@@ -81,14 +76,17 @@ class StudentTGaussianProcess:
         )
         self.gpr.fit(X, y)
         
-        # Iterative robust fitting with t-distribution weights
+        # Iterative robust fitting with Pareto-based weights
         for i in range(3):  # Perform a few iterations of reweighting
             y_pred = self.gpr.predict(X)
             residuals = y - y_pred
-            self.scale = np.std(residuals)
             
-            # Compute weights based on t-distribution
-            weights = self._compute_t_weights(residuals)
+            # Adaptively update parameters based on residuals
+            abs_residuals = np.abs(residuals)
+            self.x_min = 0.5 * np.median(abs_residuals)
+            
+            # Compute weights based on Pareto distribution
+            weights = self._compute_pareto_weights(residuals)
             
             # Refit with weighted samples
             self.gpr = GaussianProcessRegressor(
@@ -101,27 +99,30 @@ class StudentTGaussianProcess:
         
         return self
         
-    def _compute_t_weights(self, residuals):
-        """Compute weights based on t-distribution density relative to Gaussian"""
-        # Get t-distribution PDF at residuals
-        t_pdf = stats.t.pdf(residuals / self.scale, df=self.nu)
+    def _compute_pareto_weights(self, residuals):
+        """Compute weights based on Pareto distribution"""
+        # Calculate absolute residuals
+        abs_residuals = np.abs(residuals)
         
-        # Get normal PDF at residuals for comparison
-        normal_pdf = stats.norm.pdf(residuals / self.scale)
+        # Scale residuals
+        scaled_residuals = np.maximum(abs_residuals, self.x_min)
         
-        # Compute weights (avoid division by zero)
-        weights = np.maximum(t_pdf / (normal_pdf + 1e-10), 1e-10)
+        # Pareto weights: weights decline with power law for large residuals
+        weights = (self.x_min / scaled_residuals) ** (self.alpha + 1)
         
         # Normalize weights
-        weights = weights / np.mean(weights)
+        weights = weights / np.max(weights)
+        
+        # Ensure no zero weights
+        weights = np.maximum(weights, 1e-10)
         
         return weights
     
     def predict(self, X, return_std=True):
         return self.gpr.predict(X, return_std=return_std)
 
-# Create and fit the Student-t Gaussian Process model
-t_gp = StudentTGaussianProcess(nu=3.0)
+# Create and fit the Pareto Gaussian Process model
+t_gp = ParetoGaussianProcess()
 t_gp.fit(X_train, Y_train)
 
 # Create fine grid for predictions
@@ -150,5 +151,5 @@ plt.ylabel('20*log₁₀|G(jω)|')
 plt.ylim([-100, 0])  # Set y-axis limits
 plt.legend()
 plt.grid(True)
-plt.savefig(f"/root/gauss_process/result/gp_gain_avg.png")
+plt.savefig(f"/root/gauss_process/result/paredo_distribution.png")
 plt.close()
