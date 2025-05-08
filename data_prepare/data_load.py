@@ -1,56 +1,72 @@
 import numpy as np
+from numpy import genfromtxt, hstack, vstack, logspace, abs, angle
+from numpy.random import randn
 from sklearn.model_selection import train_test_split
 from pathlib import Path
-# Import data
-def data_loader():
-  tasks_path = Path.cwd() /  "data_prepare/merged.dat"
-  try:
-      data = np.genfromtxt(tasks_path, delimiter=',')
-  except:
-      # If the file doesn't exist, create some dummy data for illustration
-      print("Data file not found. Creating dummy data for illustration.")
-      omega = np.logspace(-1, 2, 100)
-      sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
-      sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
-      arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
-      data = np.vstack((omega, sys_gain_raw, arg_g_raw))
-    
-  # Transpose if necessary to get data in the right shape
-  if data.shape[0] == 3:
-    omega = data[0, :]
-    sys_gain_raw = data[1, :]
-    arg_g_raw = data[2, :]
-  else:
-    omega = data[:, 0]
-    sys_gain_raw = data[:, 1]
-    arg_g_raw = data[:, 2]
 
-  # Sort data by frequency
-  idx = np.argsort(omega)
-  omega = omega[idx]
-  sys_gain_raw = sys_gain_raw[idx]
-  arg_g_raw = arg_g_raw[idx]
+def data_loader(
+    data_dir: str = "data_prepare",
+    file_pattern: str = "*.csv",
+    train_ratio: float = 0.2,
+    random_state: int = 20
+):
+    # 1) CSVファイルをすべて読み込んで横に連結
+    files = sorted(Path(data_dir).glob(file_pattern))
+    data_list = [np.genfromtxt(f, delimiter=',') for f in files]
+    data = np.hstack(data_list)  # shape = (3, total_columns)
 
-  print(f"Number of data points: {len(omega)}")
+    # 転置チェック（shapeが(3,N)でなければ転置）
+    if data.shape[0] != 3:
+        data = data.T
 
-  # Remove noise using hampel filter
+    # A→omega, B→sys_gain_raw, C→arg_g_raw
+    omega, sys_gain_raw, arg_g_raw = data
 
-  sys_gain = sys_gain_raw
-  arg_g = arg_g_raw
-  G = sys_gain * np.exp(1j * arg_g)
+    # 2) omega の小さい順にソート
+    idx_sort = np.argsort(omega)
+    omega = omega[idx_sort]
+    sys_gain_raw = sys_gain_raw[idx_sort]
+    arg_g_raw = arg_g_raw[idx_sort]
 
+    # 3) 同一の omega 値でグループ化
+    unique_vals, counts = np.unique(omega, return_counts=True)
+    groups = []
+    start = 0
+    for cnt in counts:
+        groups.append(np.arange(start, start + cnt))
+        start += cnt
 
-  # Gaussian Process Regression for Gain
-  X = np.log10(omega).reshape(-1, 1)
-  Y = np.log10(sys_gain)*20
+    # 4) 各グループの i 番目を集めてセットを作成
+    num_sets = int(np.min(counts))
+    print(f"Number of sets: {num_sets}")
 
-  # Split data into training and test sets (80% test, 20% train)
+    sets = []
+    for i in range(num_sets):
+        idxs = [g[i] for g in groups]
+        sets.append(idxs)
 
-  X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.8, random_state=20)
-  
-  return X_train, X_test, Y_train, Y_test,omega,sys_gain_raw
+    # 5) セット単位で訓練／テストに分割
+    train_sets, test_sets = train_test_split(
+        sets, train_size=train_ratio, random_state=random_state
+    )
+    print(f"Train sets: {len(train_sets)}, Test sets: {len(test_sets)}")
 
+    # フラットなインデックスリストに戻す
+    train_idx = np.concatenate(train_sets)
+    test_idx  = np.concatenate(test_sets)
+
+    # 6) 前処理（log変換）して X, Y を作成
+    X_all = np.log10(omega).reshape(-1, 1)
+    Y_all = np.log10(sys_gain_raw) * 20
+
+    X_train = X_all[train_idx]
+    X_test  = X_all[test_idx]
+    Y_train = Y_all[train_idx]
+    Y_test  = Y_all[test_idx]
+
+    return X_train, X_test, Y_train, Y_test, omega, sys_gain_raw
 if __name__ == "__main__":
-  X_train, X_test, Y_train, Y_test = data_loader()
-  print(f"X_train: {X_train.shape}, Y_train: {Y_train.shape}")
-  print(f"X_test: {X_test.shape}, Y_test: {Y_test.shape}")
+  X_train, X_test, Y_train, Y_test, omega, sys_gain_raw = data_loader()
+  # print(f"X_train: {X_train.shape}, Y_train: {Y_train.shape}")
+  # print(f"X_test: {X_test.shape}, Y_test: {Y_test.shape}")
+  # print(f"omega: {omega.shape}, sys_gain_raw: {sys_gain_raw.shape}")
