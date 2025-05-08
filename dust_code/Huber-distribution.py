@@ -4,58 +4,12 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, Matern
 from scipy import stats
 import warnings
+from data_prepare.data_load import data_loader
+from data_prepare.accuracy import accuracy
 
 import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
-
-# Import data
-try:
-    data = np.genfromtxt('result/merged.dat', delimiter=',')
-except:
-    try:
-        data = np.genfromtxt('/root/gauss_process/result/merged.dat', delimiter=',')
-    except:
-        # If the file doesn't exist, create some dummy data for illustration
-        print("Data file not found. Creating dummy data for illustration.")
-        omega = np.logspace(-1, 2, 100)
-        sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
-        sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
-        arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
-        data = np.vstack((omega, sys_gain_raw, arg_g_raw))
-  
-# Transpose if necessary to get data in the right shape
-if data.shape[0] == 3:
-    omega = data[0, :]
-    sys_gain_raw = data[1, :]
-    arg_g_raw = data[2, :]
-else:
-    omega = data[:, 0]
-    sys_gain_raw = data[:, 1]
-    arg_g_raw = data[:, 2]
-
-# Sort data by frequency
-idx = np.argsort(omega)
-omega = omega[idx]
-sys_gain_raw = sys_gain_raw[idx]
-arg_g_raw = arg_g_raw[idx]
-
-print(f"Number of data points: {len(omega)}")
-
-# No noise removal
-sys_gain = sys_gain_raw
-arg_g = arg_g_raw
-G = sys_gain * np.exp(1j * arg_g)
-
-# Gaussian Process Regression for Gain
-X = np.log10(omega).reshape(-1, 1)
-Y = np.log10(sys_gain)*20
-
-# Split data into training and test sets
-X_train, X_test, Y_train, Y_test = train_test_split(
-    X, Y, test_size=0.8 ,random_state=20
-)
-
 
 # Custom Gaussian Process with Laplace likelihood
 class HuberGaussianProcess:
@@ -116,6 +70,7 @@ class HuberGaussianProcess:
     def predict(self, X, return_std=True):
         return self.gpr.predict(X, return_std=return_std)
 
+X_train, X_test, Y_train, Y_test, omega, sys_gain_raw = data_loader()
 # Create and fit the Laplace Gaussian Process model
 t_gp = HuberGaussianProcess()
 t_gp.fit(X_train, Y_train)
@@ -130,7 +85,8 @@ Y_pred_avg, Y_std_avg = t_gp.predict(X_fine)
 # Calculate MSE for test set
 Y_pred_test = t_gp.predict(X_test, return_std=False)
 mse_avg = np.mean((Y_pred_test - Y_test)**2)
-print(f"Test MSE: {mse_avg:.4f}")
+
+accuracy(Y_train, Y_test, Y_pred_test, Y_train_pred=None)
 
 # Plot results
 plt.figure(figsize=(10,6))

@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 Paper Reference:
     "Noisy Input Gaussian Process Regression"
     https://papers.nips.cc/paper_files/paper/2011/file/a8e864d04c95572d1aece099af852d0a-Paper.pdf
-
 """
 class NIGP:
     """
@@ -250,16 +249,16 @@ except:
         sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
         arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
         data = np.vstack((omega, sys_gain_raw, arg_g_raw))
-  
+
 # Transpose if necessary to get data in the right shape
 if data.shape[0] == 3:
-  omega = data[0, :]
-  sys_gain_raw = data[1, :]
-  arg_g_raw = data[2, :]
+    omega = data[0, :]
+    sys_gain_raw = data[1, :]
+    arg_g_raw = data[2, :]
 else:
-  omega = data[:, 0]
-  sys_gain_raw = data[:, 1]
-  arg_g_raw = data[:, 2]
+    omega = data[:, 0]
+    sys_gain_raw = data[:, 1]
+    arg_g_raw = data[:, 2]
 
 # Sort data by frequency
 idx = np.argsort(omega)

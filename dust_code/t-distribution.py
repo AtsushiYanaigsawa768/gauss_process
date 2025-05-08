@@ -17,10 +17,10 @@ https://jmlr.org/papers/volume12/jylanki11a/jylanki11a.pdf
 """
 # Import data
 try:
-    data = np.genfromtxt('result/merged.dat', delimiter=',')
+    data = np.genfromtxt('data_prepare/merged.dat', delimiter=',')
 except:
     try:
-        data = np.genfromtxt('/root/gauss_process/result/merged.dat', delimiter=',')
+        data = np.genfromtxt('gauss_process/result/merged.dat', delimiter=',')
     except:
         # If the file doesn't exist, create some dummy data for illustration
         print("Data file not found. Creating dummy data for illustration.")
@@ -29,7 +29,7 @@ except:
         sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
         arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
         data = np.vstack((omega, sys_gain_raw, arg_g_raw))
-  
+
 # Transpose if necessary to get data in the right shape
 if data.shape[0] == 3:
     omega = data[0, :]
@@ -150,5 +150,5 @@ plt.ylabel('20*log₁₀|G(jω)|')
 plt.ylim([-100, 0])  # Set y-axis limits
 plt.legend()
 plt.grid(True)
-plt.savefig(f"/root/gauss_process/result/gp_gain_avg.png")
+plt.savefig(f"result/gp_gain_avg.png")
 plt.close()

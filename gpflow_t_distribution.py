@@ -3,63 +3,10 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import gpflow
 import warnings
-
+import data_prepare.data_load as data_loader
+from data_prepare.accuracy import accuracy
 warnings.filterwarnings('ignore')
 
-# Import data
-try:
-    data = np.genfromtxt('result/merged.dat', delimiter=',')
-except:
-    try:
-        data = np.genfromtxt('/root/gauss_process/result/merged.dat', delimiter=',')
-    except:
-        # If the file doesn't exist, create some dummy data for illustration
-        print("Data file not found. Creating dummy data for illustration.")
-        omega = np.logspace(-1, 2, 100)
-        sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
-        sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
-        arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
-        data = np.vstack((omega, sys_gain_raw, arg_g_raw))
-  
-# Transpose if necessary to get data in the right shape
-if data.shape[0] == 3:
-    omega = data[0, :]
-    sys_gain_raw = data[1, :]
-    arg_g_raw = data[2, :]
-else:
-    omega = data[:, 0]
-    sys_gain_raw = data[:, 1]
-    arg_g_raw = data[:, 2]
-
-# Sort data by frequency
-idx = np.argsort(omega)
-omega = omega[idx]
-sys_gain_raw = sys_gain_raw[idx]
-arg_g_raw = arg_g_raw[idx]
-
-print(f"Number of data points: {len(omega)}")
-
-# No noise removal
-sys_gain = sys_gain_raw
-arg_g = arg_g_raw
-G = sys_gain * np.exp(1j * arg_g)
-
-# Gaussian Process Regression for Gain
-X = np.log10(omega).reshape(-1, 1)
-Y = np.log10(sys_gain)*20
-
-# Split data into training and test sets
-X_train, X_test, Y_train, Y_test = train_test_split(
-    X, Y, test_size=0.8, random_state=20
-)
-
-# Convert to float32 for TensorFlow compatibility
-# Convert to float64 for GPflow compatibility
-X_train = X_train.astype(np.float64)
-Y_train = Y_train.astype(np.float64).reshape(-1, 1)
-X_test = X_test.astype(np.float64)
-Y_test = Y_test.astype(np.float64).reshape(-1, 1)
-# Function to plot GPflow model predictions
 def plot_model(model):
     # Create fine grid for predictions
     omega_fine = np.logspace(np.log10(min(omega)), np.log10(max(omega)), 500)
@@ -90,6 +37,15 @@ def plot_model(model):
     ax.grid(True)
     plt.savefig(f"/root/gauss_process/result/gpflow_student_t.png")
     plt.close()
+# Import data
+X_train, X_test, Y_train, Y_test, omega, sys_gain_raw = data_loader.data_loader()
+# Convert to float32 for TensorFlow compatibility
+# Convert to float64 for GPflow compatibility
+X_train = X_train.astype(np.float64)
+Y_train = Y_train.astype(np.float64).reshape(-1, 1)
+X_test = X_test.astype(np.float64)
+Y_test = Y_test.astype(np.float64).reshape(-1, 1)
+# Function to plot GPflow model predictions
 
 # Create and train GPflow model with Student-t likelihood
 model = gpflow.models.VGP(

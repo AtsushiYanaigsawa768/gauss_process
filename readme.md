@@ -10,6 +10,14 @@ result:　`gaussian.py`を実行すると結果が出力されるフォルダで
 
 `gaussian.py`が、pythonのscikit-learnを用いてGBFを実行するファイルです。
 
+以下、参照した研究
+
+`k_neighber_gauss_noise.py` `gauss_noise.py`:https://papers.nips.cc/paper_files/paper/2011/file/a8e864d04c95572d1aece099af852d0a-Paper.pdf
+
+`ITGP.py` : https://arxiv.org/abs/2011.11057
+
+`Dust_data` : 現在必要ないデータです
+
 # Gaussian.py
 
 ## Hyper Parameterの設定
