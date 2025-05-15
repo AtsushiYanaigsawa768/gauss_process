@@ -1,97 +1,158 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""itgp_bode_fit.py
+
+Iteratively-trimmed Gaussian process (ITGP) smoothing of measured frequency‑response data
+for robust fitting in the presence of outliers (improved version).
+"""
+
+import sys
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from robustgp import ITGP
+import warnings
 
-# # Hampel フィルターの実装
-# def hampel_filter(vals, window_size=7, n_sigmas=3):
-#     vals = vals.copy()
-#     L = len(vals)
-#     k = window_size // 2
-#     for i in range(L):
-#         start = max(0, i - k)
-#         end   = min(L, i + k + 1)
-#         window = vals[start:end]
-#         med = np.median(window)
-#         mad = 1.4826 * np.median(np.abs(window - med))
-#         if mad > 0 and np.abs(vals[i] - med) > n_sigmas * mad:
-#             vals[i] = med
-#     return vals
+warnings.filterwarnings("ignore")
 
-# 1) データ読み込み
-filename = 'data_prepare/SKE2024_data16-Apr-2025_1819.dat'
-data = np.loadtxt(filename, delimiter=',')
-omega_raw, SysGain_raw, argG_raw = data
 
-# # 2) Hampel フィルタ
-# SysGain_f = hampel_filter(SysGain_raw, window_size=7, n_sigmas=3)
-# argG_f    = hampel_filter(argG_raw,    window_size=7, n_sigmas=3)
+def load_bode_data(filepath: Path):
+    """Load three‑column (ω, |G|, arg G) data from *filepath* (CSV)."""
+    data = np.loadtxt(filepath, delimiter=",")
+    omega, mag, phase = data
+    return omega, mag, phase
 
-# 3) ソート
-idx = np.argsort(omega_raw)
-omega   = omega_raw[idx]
-# SysGain = SysGain_f[idx]
-# argG    = argG_f[idx]
-SysGain = SysGain_raw[idx]
-argG   = argG_raw[idx]
+def main():
+    # Configuration
+    DEFAULT_DATAFILE = "data_prepare/SKE2024_data16-Apr-2025_1819.dat"
+    N_TEST_POINTS = 500
 
-# 4) 入力 X と出力 y を用意
-X        = omega.reshape(-1, 1)
-y_gain   = 20 * np.log10(SysGain)
-y_phase  = argG
+    # Data file path
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(DEFAULT_DATAFILE)
+    if not path.exists():
+        raise FileNotFoundError(f"Data file not found: {path}")
 
-# 5) ITGP による頑健 GPR (トリミング)
-#    α₁=0.5, α₂=0.975, nsh=2, ncc=2, nrw=1 を例に
-res_gain  = ITGP(X, y_gain,  alpha1=0.5, alpha2=0.975, nsh=2, ncc=2, nrw=1)
-res_phase = ITGP(X, y_phase, alpha1=0.5, alpha2=0.975, nsh=2, ncc=2, nrw=1)
-gp_gain,  cons_gain  = res_gain.gp,  res_gain.consistency
-gp_phase, cons_phase = res_phase.gp, res_phase.consistency
+    # 1) Load and sort data ----------------------------------------------------
+    omega_raw, mag_raw, phase_raw = load_bode_data(path)
+    idx = np.argsort(omega_raw)
+    omega = omega_raw[idx]
+    mag   = mag_raw[idx]
+    phase = phase_raw[idx]
 
-# 6) 予測用 ω 帯を作成
-omega_test = np.logspace(np.log10(omega.min()),
-                         np.log10(omega.max()), 500)
-Xtest = omega_test.reshape(-1,1)
+    # 2) Prepare modelling targets --------------------------------------------
+    # Log-scale input for stability
+    X = np.log10(omega).reshape(-1, 1)
 
-# 7) 予測
-y_gain_pred,  y_gain_std  = gp_gain.predict(Xtest)
-y_phase_pred, y_phase_std = gp_phase.predict(Xtest)
+    # Magnitude in dB
+    y_mag_db = 20.0 * np.log10(mag)
 
-# flatten predictions to 1D arrays for plotting
-y_gain_pred  = y_gain_pred.ravel()
-y_gain_std   = y_gain_std.ravel()
-y_phase_pred = y_phase_pred.ravel()
-y_phase_std  = y_phase_std.ravel()
+    # Unwrap phase to remove 2π discontinuities
+    y_phase = np.unwrap(phase)
 
-# 8) プロット
-plt.figure(figsize=(6,4))
-plt.semilogx(omega, y_gain,    'b*', label='Observed (gain)')
-plt.semilogx(omega_test, y_gain_pred, 'r-', label='ITGP fit')
-plt.fill_between(omega_test,
-    y_gain_pred - 2*y_gain_std,
-    y_gain_pred + 2*y_gain_std,
-    alpha=0.2, color='r')
-plt.xlabel('ω [rad/s]')
-plt.ylabel('20 log₁₀|G(jω)| [dB]')
-plt.legend(); plt.grid(True)
+    # 3) Apply ITGP for magnitude ---------------------------------------------
+    res_gain = ITGP(
+        X, y_mag_db,
+        alpha1=0.3,   # trim fraction lower
+        alpha2=0.9,   # trim fraction upper
+        nsh=2,
+        ncc=2,
+        nrw=1
+    )
+    gp_gain, cons_gain = res_gain.gp, res_gain.consistency
 
-plt.figure(figsize=(6,4))
-plt.semilogx(omega, y_phase,    'b*', label='Observed (phase)')
-plt.semilogx(omega_test, y_phase_pred, 'r-', label='ITGP fit')
-plt.fill_between(omega_test,
-    y_phase_pred - 2*y_phase_std,
-    y_phase_pred + 2*y_phase_std,
-    alpha=0.2, color='r')
-plt.xlabel('ω [rad/s]')
-plt.ylabel('Phase [rad]')
-plt.legend(); plt.grid(True)
+    # 4) Apply ITGP for phase -------------------------------------------------
+    res_phase = ITGP(
+        X, y_phase,
+        alpha1=0.3,
+        alpha2=0.9,
+        nsh=2,
+        ncc=2,
+        nrw=1
+    )
+    gp_phase, cons_phase = res_phase.gp, res_phase.consistency
 
-# 9) Nyquist プロット
-G_dataset = SysGain * np.exp(1j * argG)
-H_best    = 10**(y_gain_pred/20) * np.exp(1j * y_phase_pred)
+    # 5) Dense prediction grid -------------------------------------------------
+    omega_test = np.logspace(
+        np.log10(omega.min()),
+        np.log10(omega.max()),
+        N_TEST_POINTS
+    )
+    X_test = np.log10(omega_test).reshape(-1, 1)
 
-plt.figure(figsize=(6,4))
-plt.plot(G_dataset.real, G_dataset.imag, 'b*', label='Data')
-plt.plot(H_best.real,    H_best.imag,    'r-', linewidth=2, label='ITGP Est.')
-plt.xlabel('Re'); plt.ylabel('Im')
-plt.title('Nyquist Plot'); plt.grid(True); plt.legend()
-plt.tight_layout()
-plt.show()
+    # Predict magnitude
+    y_mag_pred, y_mag_std = gp_gain.predict(X_test)
+    y_mag_pred = y_mag_pred.ravel()
+    y_mag_std  = y_mag_std.ravel()
+
+    y_mag_up = y_mag_pred + 1.96 * y_mag_std
+    y_mag_lo = y_mag_pred - 1.96 * y_mag_std
+
+    # Predict phase
+    y_phase_pred, y_phase_std = gp_phase.predict(X_test)
+    y_phase_pred = y_phase_pred.ravel()
+    y_phase_std  = y_phase_std.ravel()
+
+    # 6) Plot Bode magnitude --------------------------------------------------
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.semilogx(omega, y_mag_db, "b*", label="Observed (gain)")
+    ax.semilogx(omega_test, y_mag_pred, "r-", lw=2, label="ITGP fit")
+    ax.fill_between(
+        omega_test,
+        y_mag_lo,
+        y_mag_up,
+        color="red",
+        alpha=0.25,
+        label="95 % CI",
+    )
+    ax.set_xlabel(r"$\omega$ [rad/s]")
+    ax.set_ylabel(r"$20\,\log_{10}|G(j\omega)|$ [dB]")
+    ax.grid(True, which="both", ls=":", alpha=0.5)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig("_itgp_fit.png", dpi=300)
+
+    # 7) Plot Bode phase ------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.semilogx(omega, phase, "b*", label="Observed (phase)")
+    ax.semilogx(omega_test, y_phase_pred, "r-", lw=2, label="ITGP fit")
+    ax.fill_between(
+        omega_test,
+        y_phase_pred - 1.96 * y_phase_std,
+        y_phase_pred + 1.96 * y_phase_std,
+        color="red",
+        alpha=0.25,
+        label="95 % CI",
+    )
+    ax.set_xlabel(r"$\omega$ [rad/s]")
+    ax.set_ylabel("Phase [rad]")
+    ax.grid(True, which="both", ls=":", alpha=0.5)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig("_itgp_phase.png", dpi=300)
+
+    # 8) Create Nyquist plot ---------------------------------------------------
+    G_dataset = mag * np.exp(1j * phase)
+    H_best   = 10**(y_mag_pred/20) * np.exp(1j * y_phase_pred)
+
+    # Ensure curve is plotted in frequency order
+    order = np.argsort(omega_test)
+    plt.figure(figsize=(10, 6))
+    plt.plot(G_dataset.real, G_dataset.imag, 'b*', markersize=6, label='Data')
+    plt.plot(
+        H_best.real[order],
+        H_best.imag[order],
+        'r-', linewidth=2,
+        label='ITGP Est.'
+    )
+    plt.xlabel('Re')
+    plt.ylabel('Im')
+    plt.title('Nyquist Plot')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("_nyquist.png", dpi=300)
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()

@@ -6,6 +6,12 @@ from sklearn.metrics import mean_squared_error
 import time
 import os
 import matplotlib.pyplot as plt
+import sys
+from pathlib import Path
+import warnings
+from robustgp import ITGP
+
+warnings.filterwarnings("ignore")
 
 """
 Paper Reference:
@@ -161,176 +167,149 @@ class NIGP:
             var[i] = np.diag(K_ss - K_s.T @ v)[0]
             
         return mu, var
-    
-def nigp_exact_predict(X_train, y_train, X_test, 
-                lengthscales, signal_var, noise_y, noise_x, k=None):
-    """
-    Exact moment matching predictor for NIGP (Section 4) with k-nearest neighbors.
-    - X_train: (N, D)
-    - y_train: (N,)
-    - X_test:  (M, D)
-    - lengthscales: (D,)
-    - signal_var: scalar σ_f^2
-    - noise_y: scalar σ_y^2
-    - noise_x: (D,) Σ_x diagonal
-    - k: number of nearest neighbors to use (None=all points)
-    Returns:
-    mu:  (M,)  predictive means
-    var: (M,)  predictive variances
-    """
-    N, D = X_train.shape
-    M, _ = X_test.shape
-    Λ = np.diag(lengthscales**2)
-    Σ_x = np.diag(noise_x)
-    
-    # ARD RBF kernel function
-    def ard_rbf(A, B):
-        diff = (A[:, None, :] - B[None, :, :]) / lengthscales
-        return signal_var * np.exp(-0.5 * np.sum(diff**2, axis=2))
-    
-    # Find k nearest neighbors function
-    def find_k_nearest(X_train, x_test):
-        distances = np.sum((X_train - x_test)**2, axis=1)
-        if k is None or k >= len(distances):
-            return np.arange(len(distances))  # Use all points
-        return np.argsort(distances)[:k]  # Return k nearest indices
-    
-    # Pre-compute D matrix for all training points
-    D_diag = np.zeros(N)  # Example: assume already computed
-    
-    # Prepare full kernel matrix and alpha for gradient computation
-    K_full = ard_rbf(X_train, X_train)
-    K_full += np.diag(noise_y + D_diag)
-    L_full, lower_full = cho_factor(K_full, lower=True)
-    alpha_full = cho_solve((L_full, lower_full), y_train)
-    
-    # 3. Compute prediction for each test point using k nearest neighbors
-    mu = np.zeros(M)
-    var = np.zeros(M)
-    for m in range(M):
-        x_star = X_test[m]
-        
-        # Find k nearest neighbors
-        nn_idx = find_k_nearest(X_train, x_star)
-        X_nn = X_train[nn_idx]
-        y_nn = y_train[nn_idx]
-        D_nn = D_diag[nn_idx]
-        
-        # Prepare kernel matrix for these neighbors
-        K_nn = ard_rbf(X_nn, X_nn)
-        K_nn += np.diag(noise_y + D_nn)
-        L_nn, lower_nn = cho_factor(K_nn, lower=True)
-        alpha_nn = cho_solve((L_nn, lower_nn), y_nn)
-        
-        # Compute q vector for these neighbors
-        diff = X_nn - x_star
-        exp_arg = -0.5 * np.sum(diff @ np.linalg.inv(Σ_x + Λ) * diff, axis=1)
-        norm_term = signal_var * det(Σ_x @ np.linalg.inv(Λ) + np.eye(D))**(-0.5)
-        q = norm_term * np.exp(exp_arg)
-        
-        mu[m] = q @ alpha_nn  # prediction mean
-        
-        # Compute Q matrix for variance
-        k1 = ard_rbf(X_nn, x_star[None, :]).ravel()
-        Q = np.zeros((len(nn_idx), len(nn_idx)))
-        inv_term = np.linalg.inv(Λ + 0.5 * Σ_x)
-        det_term = det(2 * Σ_x @ np.linalg.inv(Λ) + np.eye(D))**(-0.5)
-        
-        for i in range(len(nn_idx)):
-            for j in range(len(nn_idx)):
-                z = 0.5 * (X_nn[i] + X_nn[j])
-                exponent = (z - x_star) @ inv_term @ (z - x_star)
-                Q[i, j] = k1[i] * k1[j] * det_term * np.exp(exponent)
-        
-        # Compute variance
-        var[m] = (signal_var 
-                - np.trace(cho_solve((L_nn, lower_nn), Q)) 
-                + alpha_nn @ (Q @ alpha_nn) 
-                - mu[m]**2)
+def load_bode_data(filepath):
+    """Load three‑column (ω, |G|, arg G) data from filepath (CSV)."""
+    try:
+        data = np.loadtxt(filepath, delimiter=",")
+        omega, mag, phase = data
+        return omega, mag, phase
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        sys.exit(1)
 
-    return mu, var
+# Configuration
+DEFAULT_DATAFILE = "data_prepare/SKE2024_data16-Apr-2025_1819.dat"
+N_TEST_POINTS = 500
 
-# 1) データ読み込み
-filename = 'data_prepare/SKE2024_data16-Apr-2025_1819.dat'
-data = np.loadtxt(filename, delimiter=',')
-omega_raw, SysGain_raw, argG_raw = data
+# Data file path
+path = Path(DEFAULT_DATAFILE)
+if not path.exists():
+    print(f"Warning: Data file not found: {path}")
+    # Create dummy data for testing
+    omega_raw = np.logspace(-1, 2, 100)
+    SysGain_raw = 10 * (1 / (1 + 1j * omega_raw / 10))
+    SysGain_raw = np.abs(SysGain_raw) + 0.2 * np.random.randn(len(omega_raw))
+    argG_raw = np.angle(1 / (1 + 1j * omega_raw / 10)) + 0.1 * np.random.randn(len(omega_raw))
+else:
+    # 1) Load data
+    omega_raw, SysGain_raw, argG_raw = load_bode_data(path)
 
-# # 2) Hampel フィルタ
-SysGain_f = hampel_filter(SysGain_raw, window_size=7, n_sigmas=3)
-argG_f    = hampel_filter(argG_raw,    window_size=7, n_sigmas=3)
-
-# 3) ソート
+# 2) Sort data
 idx = np.argsort(omega_raw)
-omega   = omega_raw[idx]
-# SysGain = SysGain_f[idx]
-# argG    = argG_f[idx]
+omega = omega_raw[idx]
 SysGain = SysGain_raw[idx]
-argG   = argG_raw[idx]
+argG = argG_raw[idx]
 
-# 4) 入力 X と出力 y を用意
-X        = omega.reshape(-1, 1)
-y_gain   = 20 * np.log10(SysGain)
-y_phase  = argG
-model_1 = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=10, noise_x=[0.1],k=30)
+# 3) Prepare modelling targets
+# Log-scale input for stability
+X = np.log10(omega).reshape(-1, 1)
 
-# 学習
-model_1.fit(X, y_gain, iterations=10)
+# Magnitude in dB
+y_gain = 20.0 * np.log10(SysGain)
 
-# Get predictions for gain
-gain_pred, gain_var = model_1.predict(X, y_gain, X)
+# Unwrap phase to remove 2π discontinuities
+y_phase = np.unwrap(argG)
 
-# Train another model for phase
-model = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=10, noise_x=[0.1],k=50)
-model.fit(X, y_phase, iterations=10)
-phase_pred, phase_var = model.predict(X, y_phase, X)
+# 4) Apply ITGP for magnitude
+res_gain = ITGP(
+    X, y_gain,
+    alpha1=0.3,   # trim fraction lower
+    alpha2=0.9,   # trim fraction upper
+    nsh=2,
+    ncc=2,
+    nrw=1
+)
+gp_gain, cons_gain = res_gain.gp, res_gain.consistency
 
-# 6) 予測用 ω 帯を作成
-omega_test = np.logspace(np.log10(omega.min()),
-                         np.log10(omega.max()), 500)
-Xtest = omega_test.reshape(-1,1)
+# 5) Apply ITGP for phase
+res_phase = ITGP(
+    X, y_phase,
+    alpha1=0.3,
+    alpha2=0.9,
+    nsh=2,
+    ncc=2,
+    nrw=1
+)
+gp_phase, cons_phase = res_phase.gp, res_phase.consistency
 
-# 7) 予測
-y_gain_pred, y_gain_var = model.predict(X, y_gain, Xtest)
-y_phase_pred, y_phase_var = model.predict(X, y_phase, Xtest)
+# 6) Dense prediction grid
+omega_test = np.logspace(
+    np.log10(omega.min()),
+    np.log10(omega.max()),
+    N_TEST_POINTS
+)
+X_test = np.log10(omega_test).reshape(-1, 1)
 
-# Calculate standard deviations
-y_gain_std = np.sqrt(y_gain_var)
-y_phase_std = np.sqrt(y_phase_var)
+# Predict magnitude
+y_gain_pred, y_gain_std = gp_gain.predict(X_test)
+y_gain_pred = y_gain_pred.ravel()
+y_gain_std = y_gain_std.ravel()
 
-# flatten predictions to 1D arrays for plotting
-y_gain_pred  = y_gain_pred.ravel()
-y_gain_std   = y_gain_std.ravel()
+y_gain_up = y_gain_pred + 1.96 * y_gain_std
+y_gain_lo = y_gain_pred - 1.96 * y_gain_std
+
+# Predict phase
+y_phase_pred, y_phase_std = gp_phase.predict(X_test)
 y_phase_pred = y_phase_pred.ravel()
-y_phase_std  = y_phase_std.ravel()
+y_phase_std = y_phase_std.ravel()
 
-# 8) プロット
-plt.figure(figsize=(6,4))
-plt.semilogx(omega, y_gain,    'b*', label='Observed (gain)')
-plt.semilogx(omega_test, y_gain_pred, 'r-', label='ITGP fit')
-plt.fill_between(omega_test,
-    y_gain_pred - 2*y_gain_std,
-    y_gain_pred + 2*y_gain_std,
-    alpha=0.2, color='r')
-plt.xlabel('ω [rad/s]')
-plt.ylabel('20 log₁₀|G(jω)| [dB]')
-plt.legend(); plt.grid(True)
+# 7) Plot Bode magnitude
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.semilogx(omega, y_gain, "b*", label="Observed (gain)")
+ax.semilogx(omega_test, y_gain_pred, "r-", lw=2, label="ITGP fit")
+ax.fill_between(
+    omega_test,
+    y_gain_lo,
+    y_gain_up,
+    color="red",
+    alpha=0.25,
+    label="95% CI",
+)
+ax.set_xlabel(r"$\omega$ [rad/s]")
+ax.set_ylabel(r"$20\,\log_{10}|G(j\omega)|$ [dB]")
+ax.grid(True, which="both", ls=":", alpha=0.5)
+ax.legend()
+fig.tight_layout()
 
-plt.figure(figsize=(6,4))
-plt.semilogx(omega, y_phase,    'b*', label='Observed (phase)')
-plt.semilogx(omega_test, y_phase_pred, 'r-', label='ITGP fit')
-plt.fill_between(omega_test,
-    y_phase_pred - 2*y_phase_std,
-    y_phase_pred + 2*y_phase_std,
-    alpha=0.2, color='r')
-plt.xlabel('ω [rad/s]')
-plt.ylabel('Phase [rad]')
-plt.legend(); plt.grid(True)
+# 8) Plot Bode phase
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.semilogx(omega, argG, "b*", label="Observed (phase)")
+ax.semilogx(omega_test, y_phase_pred, "r-", lw=2, label="ITGP fit")
+ax.fill_between(
+    omega_test,
+    y_phase_pred - 1.96 * y_phase_std,
+    y_phase_pred + 1.96 * y_phase_std,
+    color="red",
+    alpha=0.25,
+    label="95% CI",
+)
+ax.set_xlabel(r"$\omega$ [rad/s]")
+ax.set_ylabel("Phase [rad]")
+ax.grid(True, which="both", ls=":", alpha=0.5)
+ax.legend()
+fig.tight_layout()
 
-# 9) Nyquist プロット
+# 9) Create Nyquist plot
 G_dataset = SysGain * np.exp(1j * argG)
-H_best    = 10**(y_gain_pred/20) * np.exp(1j * y_phase_pred)
+H_best = 10**(y_gain_pred/20) * np.exp(1j * y_phase_pred)
 
-plt.figure(figsize=(6,4))
+# Ensure curve is plotted in frequency order
+order = np.argsort(omega_test)
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(G_dataset.real, G_dataset.imag, 'b*', markersize=6, label='Data')
+ax.plot(
+    H_best.real[order],
+    H_best.imag[order],
+    'r-', linewidth=2,
+    label='ITGP Est.'
+)
+ax.set_xlabel('Re')
+ax.set_ylabel('Im')
+ax.set_title('Nyquist Plot')
+ax.grid(True)
+ax.legend()
+fig.tight_layout()
+plt.show()
 plt.plot(G_dataset.real, G_dataset.imag, 'b*', label='Data')
 plt.plot(H_best.real,    H_best.imag,    'r-', linewidth=2, label='ITGP Est.')
 plt.xlabel('Re'); plt.ylabel('Im')
