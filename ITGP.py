@@ -1,95 +1,97 @@
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, Matern
-from scipy import stats
-import warnings
-from robustgp import ITGP
 import matplotlib.pyplot as plt
+from robustgp import ITGP
 
-warnings.filterwarnings('ignore')
+# # Hampel フィルターの実装
+# def hampel_filter(vals, window_size=7, n_sigmas=3):
+#     vals = vals.copy()
+#     L = len(vals)
+#     k = window_size // 2
+#     for i in range(L):
+#         start = max(0, i - k)
+#         end   = min(L, i + k + 1)
+#         window = vals[start:end]
+#         med = np.median(window)
+#         mad = 1.4826 * np.median(np.abs(window - med))
+#         if mad > 0 and np.abs(vals[i] - med) > n_sigmas * mad:
+#             vals[i] = med
+#     return vals
 
-"""
-paper; Robust Gaussian Process Regression Based on Iterative Trimming
-https://arxiv.org/abs/2011.11057
-github; https://github.com/syrte/robustgp
-"""
-# Import data
-try:
-    data = np.genfromtxt('result/merged.dat', delimiter=',')
-except:
-    try:
-        data = np.genfromtxt('/root/gauss_process/result/merged.dat', delimiter=',')
-    except:
-        # If the file doesn't exist, create some dummy data for illustration
-        print("Data file not found. Creating dummy data for illustration.")
-        omega = np.logspace(-1, 2, 100)
-        sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
-        sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
-        arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
-        data = np.vstack((omega, sys_gain_raw, arg_g_raw))
-  
-# Transpose if necessary to get data in the right shape
-if data.shape[0] == 3:
-    omega = data[0, :]
-    sys_gain_raw = data[1, :]
-    arg_g_raw = data[2, :]
-else:
-    omega = data[:, 0]
-    sys_gain_raw = data[:, 1]
-    arg_g_raw = data[:, 2]
+# 1) データ読み込み
+filename = 'data_prepare/SKE2024_data16-Apr-2025_1819.dat'
+data = np.loadtxt(filename, delimiter=',')
+omega_raw, SysGain_raw, argG_raw = data
 
-# Sort data by frequency
-idx = np.argsort(omega)
-omega = omega[idx]
-sys_gain_raw = sys_gain_raw[idx]
-arg_g_raw = arg_g_raw[idx]
+# # 2) Hampel フィルタ
+# SysGain_f = hampel_filter(SysGain_raw, window_size=7, n_sigmas=3)
+# argG_f    = hampel_filter(argG_raw,    window_size=7, n_sigmas=3)
 
-print(f"Number of data points: {len(omega)}")
+# 3) ソート
+idx = np.argsort(omega_raw)
+omega   = omega_raw[idx]
+# SysGain = SysGain_f[idx]
+# argG    = argG_f[idx]
+SysGain = SysGain_raw[idx]
+argG   = argG_raw[idx]
 
-# No noise removal
-sys_gain = sys_gain_raw
-arg_g = arg_g_raw
-G = sys_gain * np.exp(1j * arg_g)
+# 4) 入力 X と出力 y を用意
+X        = omega.reshape(-1, 1)
+y_gain   = 20 * np.log10(SysGain)
+y_phase  = argG
 
-# Gaussian Process Regression for Gain
-X = np.log10(omega).reshape(-1, 1)
-Y = np.log10(sys_gain)*20
+# 5) ITGP による頑健 GPR (トリミング)
+#    α₁=0.5, α₂=0.975, nsh=2, ncc=2, nrw=1 を例に
+res_gain  = ITGP(X, y_gain,  alpha1=0.5, alpha2=0.975, nsh=2, ncc=2, nrw=1)
+res_phase = ITGP(X, y_phase, alpha1=0.5, alpha2=0.975, nsh=2, ncc=2, nrw=1)
+gp_gain,  cons_gain  = res_gain.gp,  res_gain.consistency
+gp_phase, cons_phase = res_phase.gp, res_phase.consistency
 
-# Split data into training and test sets
-X_train, X_test, Y_train, Y_test = train_test_split(
-    X, Y, test_size=0.8 ,random_state=20
-)
+# 6) 予測用 ω 帯を作成
+omega_test = np.logspace(np.log10(omega.min()),
+                         np.log10(omega.max()), 500)
+Xtest = omega_test.reshape(-1,1)
 
+# 7) 予測
+y_gain_pred,  y_gain_std  = gp_gain.predict(Xtest)
+y_phase_pred, y_phase_std = gp_phase.predict(Xtest)
 
-res = ITGP(X_train, Y_train, alpha1=0.5, alpha2=0.975, nsh=2, ncc=2, nrw=1)
-gp, consistency = res.gp, res.consistency
+# flatten predictions to 1D arrays for plotting
+y_gain_pred  = y_gain_pred.ravel()
+y_gain_std   = y_gain_std.ravel()
+y_phase_pred = y_phase_pred.ravel()
+y_phase_std  = y_phase_std.ravel()
 
-# Create fine grid for predictions
-omega_fine = np.logspace(np.log10(min(omega)), np.log10(max(omega)), 500)
-X_fine = np.log10(omega_fine).reshape(-1, 1)
+# 8) プロット
+plt.figure(figsize=(6,4))
+plt.semilogx(omega, y_gain,    'b*', label='Observed (gain)')
+plt.semilogx(omega_test, y_gain_pred, 'r-', label='ITGP fit')
+plt.fill_between(omega_test,
+    y_gain_pred - 2*y_gain_std,
+    y_gain_pred + 2*y_gain_std,
+    alpha=0.2, color='r')
+plt.xlabel('ω [rad/s]')
+plt.ylabel('20 log₁₀|G(jω)| [dB]')
+plt.legend(); plt.grid(True)
 
-# Predict with GP
-Y_pred_avg, Y_std_avg = gp.predict(X_fine)
+plt.figure(figsize=(6,4))
+plt.semilogx(omega, y_phase,    'b*', label='Observed (phase)')
+plt.semilogx(omega_test, y_phase_pred, 'r-', label='ITGP fit')
+plt.fill_between(omega_test,
+    y_phase_pred - 2*y_phase_std,
+    y_phase_pred + 2*y_phase_std,
+    alpha=0.2, color='r')
+plt.xlabel('ω [rad/s]')
+plt.ylabel('Phase [rad]')
+plt.legend(); plt.grid(True)
 
-# Calculate MSE for test set
-Y_pred_test = gp.predict(X_test)
-mse_avg = np.mean((Y_pred_test - Y_test)**2)
-print(f"Test MSE: {mse_avg:.4f}")
+# 9) Nyquist プロット
+G_dataset = SysGain * np.exp(1j * argG)
+H_best    = 10**(y_gain_pred/20) * np.exp(1j * y_phase_pred)
 
-# Plot results
-plt.figure(figsize=(10,6))
-plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', alpha=0.5, label='Raw data')
-plt.semilogx(10**X_test, Y_test, 'mo', label='Test data')
-plt.semilogx(10**X_train, Y_train, 'ro', label='Train data')
-plt.semilogx(omega_fine, Y_pred_avg, 'g-', label='Averaged GPR')
-plt.semilogx(omega_fine, Y_pred_avg+2*Y_std_avg, 'g--', alpha=0.5)
-plt.semilogx(omega_fine, Y_pred_avg-2*Y_std_avg, 'g--', alpha=0.5)
-plt.text(0.05,0.05,f"Avg Test MSE: {mse_avg:.4f}", transform=plt.gca().transAxes)
-plt.xlabel('ω [rad/sec]')
-plt.ylabel('20*log₁₀|G(jω)|')
-plt.ylim([-100, 0])  # Set y-axis limits
-plt.legend()
-plt.grid(True)
-plt.savefig(f"/root/gauss_process/result/gp_gain_avg.png")
-plt.close()
+plt.figure(figsize=(6,4))
+plt.plot(G_dataset.real, G_dataset.imag, 'b*', label='Data')
+plt.plot(H_best.real,    H_best.imag,    'r-', linewidth=2, label='ITGP Est.')
+plt.xlabel('Re'); plt.ylabel('Im')
+plt.title('Nyquist Plot'); plt.grid(True); plt.legend()
+plt.tight_layout()
+plt.show()

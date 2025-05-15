@@ -13,6 +13,20 @@ Paper Reference:
     https://papers.nips.cc/paper_files/paper/2011/file/a8e864d04c95572d1aece099af852d0a-Paper.pdf
 
 """
+# # Hampel フィルターの実装
+def hampel_filter(vals, window_size=7, n_sigmas=3):
+    vals = vals.copy()
+    L = len(vals)
+    k = window_size // 2
+    for i in range(L):
+        start = max(0, i - k)
+        end   = min(L, i + k + 1)
+        window = vals[start:end]
+        med = np.median(window)
+        mad = 1.4826 * np.median(np.abs(window - med))
+        if mad > 0 and np.abs(vals[i] - med) > n_sigmas * mad:
+            vals[i] = med
+    return vals
 class NIGP:
     """
     Noisy Input Gaussian Process (NIGP) implementation with k-nearest neighbors.
@@ -236,116 +250,205 @@ def nigp_exact_predict(X_train, y_train, X_test,
 
     return mu, var
 
-# Import data
-try:
-    data = np.genfromtxt('result/merged.dat', delimiter=',')
-except:
-    try:
-        data = np.genfromtxt('/root/gauss_process/result/merged.dat', delimiter=',')
-    except:
-        # If the file doesn't exist, create some dummy data for illustration
-        print("Data file not found. Creating dummy data for illustration.")
-        omega = np.logspace(-1, 2, 100)
-        sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
-        sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
-        arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
-        data = np.vstack((omega, sys_gain_raw, arg_g_raw))
-  
-# Transpose if necessary to get data in the right shape
-if data.shape[0] == 3:
-  omega = data[0, :]
-  sys_gain_raw = data[1, :]
-  arg_g_raw = data[2, :]
-else:
-  omega = data[:, 0]
-  sys_gain_raw = data[:, 1]
-  arg_g_raw = data[:, 2]
+# 1) データ読み込み
+filename = 'data_prepare/SKE2024_data16-Apr-2025_1819.dat'
+data = np.loadtxt(filename, delimiter=',')
+omega_raw, SysGain_raw, argG_raw = data
 
-# Sort data by frequency
-idx = np.argsort(omega)
-omega = omega[idx]
-sys_gain_raw = sys_gain_raw[idx]
-arg_g_raw = arg_g_raw[idx]
+# # 2) Hampel フィルタ
+SysGain_f = hampel_filter(SysGain_raw, window_size=7, n_sigmas=3)
+argG_f    = hampel_filter(argG_raw,    window_size=7, n_sigmas=3)
 
-print(f"Number of data points: {len(omega)}")
+# 3) ソート
+idx = np.argsort(omega_raw)
+omega   = omega_raw[idx]
+# SysGain = SysGain_f[idx]
+# argG    = argG_f[idx]
+SysGain = SysGain_raw[idx]
+argG   = argG_raw[idx]
 
-# Remove noise using hampel filter
-
-sys_gain = sys_gain_raw
-arg_g = arg_g_raw
-G = sys_gain * np.exp(1j * arg_g)
-
-
-# Gaussian Process Regression for Gain
-X = np.log10(omega).reshape(-1, 1)
-Y = np.log10(sys_gain)*20
-
-# Split data into training and test sets (80% test, 20% train)
-
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.8, random_state=20)
-
-model = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=0.01, noise_x=[0.1],k=25)
+# 4) 入力 X と出力 y を用意
+X        = omega.reshape(-1, 1)
+y_gain   = 20 * np.log10(SysGain)
+y_phase  = argG
+model_1 = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=10, noise_x=[0.1],k=30)
 
 # 学習
-model.fit(X_train, Y_train, iterations=5)
+model_1.fit(X, y_gain, iterations=10)
 
-# テストデータに対する予測と訓練データに対する予測を一度に行う
-X_all = np.vstack([X_train, X_test])
-# Predict for training and test data
-mu_train, var_train = model.predict(X_train, Y_train, X_train)
-mu_test, var_test = model.predict(X_train, Y_train, X_test)
+# Get predictions for gain
+gain_pred, gain_var = model_1.predict(X, y_gain, X)
 
-# Calculate MSE for training and test sets
-mse_train = mean_squared_error(Y_train, mu_train)
-mse_test = mean_squared_error(Y_test, mu_test)
-print(f"Training MSE: {mse_train:.4f}")
-print(f"Test MSE: {mse_test:.4f}")
+# Train another model for phase
+model = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=10, noise_x=[0.1],k=50)
+model.fit(X, y_phase, iterations=10)
+phase_pred, phase_var = model.predict(X, y_phase, X)
 
-# For timing (optional)
-calculate_time = True
-if calculate_time:
-    start = time.time()
+# 6) 予測用 ω 帯を作成
+omega_test = np.logspace(np.log10(omega.min()),
+                         np.log10(omega.max()), 500)
+Xtest = omega_test.reshape(-1,1)
 
-# Create result directory if it doesn't exist
-os.makedirs("result", exist_ok=True)
+# 7) 予測
+y_gain_pred, y_gain_var = model.predict(X, y_gain, Xtest)
+y_phase_pred, y_phase_var = model.predict(X, y_phase, Xtest)
 
-# Generate finer grid for prediction
-omega_fine = np.logspace(np.log10(min(omega)), np.log10(max(omega)), 1000)
-X_fine = np.log10(omega_fine).reshape(-1, 1)
+# Calculate standard deviations
+y_gain_std = np.sqrt(y_gain_var)
+y_phase_std = np.sqrt(y_phase_var)
 
-# Predict using the model
-Y_pred_fine, Y_var_fine = model.predict(X_train, Y_train, X_fine)
-Y_std = np.sqrt(Y_var_fine)
+# flatten predictions to 1D arrays for plotting
+y_gain_pred  = y_gain_pred.ravel()
+y_gain_std   = y_gain_std.ravel()
+y_phase_pred = y_phase_pred.ravel()
+y_phase_std  = y_phase_std.ravel()
 
-# Define filename for saving
-png_name = "gp_gain_spline_more"
+# 8) プロット
+plt.figure(figsize=(6,4))
+plt.semilogx(omega, y_gain,    'b*', label='Observed (gain)')
+plt.semilogx(omega_test, y_gain_pred, 'r-', label='ITGP fit')
+plt.fill_between(omega_test,
+    y_gain_pred - 2*y_gain_std,
+    y_gain_pred + 2*y_gain_std,
+    alpha=0.2, color='r')
+plt.xlabel('ω [rad/s]')
+plt.ylabel('20 log₁₀|G(jω)| [dB]')
+plt.legend(); plt.grid(True)
 
-# Plot the GPR results for gain
-plt.figure(figsize=(10, 6))
-# Plot original data points
-plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', markersize=3, alpha=0.5, label='Raw data')
-# Plot training and test data points
-plt.semilogx(10**X_test, Y_test, 'mo', markersize=6, label='Test data')
-plt.semilogx(10**X_train, Y_train, 'ro', markersize=6, label='Training data')
-# Plot GPR prediction
-plt.semilogx(omega_fine, Y_pred_fine, 'g-', linewidth=2, label='GPR prediction')
-# Add confidence bounds (±2 standard deviations)
-plt.semilogx(omega_fine, (Y_pred_fine + 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-plt.semilogx(omega_fine, (Y_pred_fine - 2*Y_std), 'g--', linewidth=1, alpha=0.5)
-# Add MSE text to plot
-plt.text(0.05, 0.05, f"Train MSE: {mse_train:.4f}\nTest MSE: {mse_test:.4f}", 
-  transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
+plt.figure(figsize=(6,4))
+plt.semilogx(omega, y_phase,    'b*', label='Observed (phase)')
+plt.semilogx(omega_test, y_phase_pred, 'r-', label='ITGP fit')
+plt.fill_between(omega_test,
+    y_phase_pred - 2*y_phase_std,
+    y_phase_pred + 2*y_phase_std,
+    alpha=0.2, color='r')
+plt.xlabel('ω [rad/s]')
+plt.ylabel('Phase [rad]')
+plt.legend(); plt.grid(True)
 
-plt.xlabel('ω [rad/sec]', fontsize=16)
-plt.ylabel('20*log₁₀|G(jω)| ', fontsize=16)
-plt.title('Bode Gain plot with GPR (Train/Test Split)', fontsize=16)
-plt.legend(fontsize=12, loc='best')
-plt.grid(True)
-plt.savefig(f"/root/gauss_process/result/{png_name}_output.png")
-plt.close()
+# 9) Nyquist プロット
+G_dataset = SysGain * np.exp(1j * argG)
+H_best    = 10**(y_gain_pred/20) * np.exp(1j * y_phase_pred)
+
+plt.figure(figsize=(6,4))
+plt.plot(G_dataset.real, G_dataset.imag, 'b*', label='Data')
+plt.plot(H_best.real,    H_best.imag,    'r-', linewidth=2, label='ITGP Est.')
+plt.xlabel('Re'); plt.ylabel('Im')
+plt.title('Nyquist Plot'); plt.grid(True); plt.legend()
+plt.tight_layout()
+plt.show()
 
 
-if calculate_time:
-  end = time.time()
-  elapsed_time = end - start
-  print(f"Elapsed time: {elapsed_time:.2f} seconds")
+# # Import data
+# try:
+#     data = np.genfromtxt('result/merged.dat', delimiter=',')
+# except:
+#     try:
+#         data = np.genfromtxt('/root/gauss_process/result/merged.dat', delimiter=',')
+#     except:
+#         # If the file doesn't exist, create some dummy data for illustration
+#         print("Data file not found. Creating dummy data for illustration.")
+#         omega = np.logspace(-1, 2, 100)
+#         sys_gain_raw = 10 * (1 / (1 + 1j * omega / 10))
+#         sys_gain_raw = np.abs(sys_gain_raw) + 0.2 * np.random.randn(len(omega))
+#         arg_g_raw = np.angle(1 / (1 + 1j * omega / 10)) + 0.1 * np.random.randn(len(omega))
+#         data = np.vstack((omega, sys_gain_raw, arg_g_raw))
+  
+# # Transpose if necessary to get data in the right shape
+# if data.shape[0] == 3:
+#   omega = data[0, :]
+#   sys_gain_raw = data[1, :]
+#   arg_g_raw = data[2, :]
+# else:
+#   omega = data[:, 0]
+#   sys_gain_raw = data[:, 1]
+#   arg_g_raw = data[:, 2]
+
+# # Sort data by frequency
+# idx = np.argsort(omega)
+# omega = omega[idx]
+# sys_gain_raw = sys_gain_raw[idx]
+# arg_g_raw = arg_g_raw[idx]
+
+# print(f"Number of data points: {len(omega)}")
+
+# # Remove noise using hampel filter
+
+# sys_gain = sys_gain_raw
+# arg_g = arg_g_raw
+# G = sys_gain * np.exp(1j * arg_g)
+
+
+# # Gaussian Process Regression for Gain
+# X = np.log10(omega).reshape(-1, 1)
+# Y = np.log10(sys_gain)*20
+
+# # Split data into training and test sets (80% test, 20% train)
+
+# X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.8, random_state=20)
+
+# model = NIGP(lengthscales=[1.0], signal_var=1.0, noise_y=0.01, noise_x=[0.1],k=25)
+
+# # 学習
+# model.fit(X_train, Y_train, iterations=5)
+
+# # テストデータに対する予測と訓練データに対する予測を一度に行う
+# X_all = np.vstack([X_train, X_test])
+# # Predict for training and test data
+# mu_train, var_train = model.predict(X_train, Y_train, X_train)
+# mu_test, var_test = model.predict(X_train, Y_train, X_test)
+
+# # Calculate MSE for training and test sets
+# mse_train = mean_squared_error(Y_train, mu_train)
+# mse_test = mean_squared_error(Y_test, mu_test)
+# print(f"Training MSE: {mse_train:.4f}")
+# print(f"Test MSE: {mse_test:.4f}")
+
+# # For timing (optional)
+# calculate_time = True
+# if calculate_time:
+#     start = time.time()
+
+# # Create result directory if it doesn't exist
+# os.makedirs("result", exist_ok=True)
+
+# # Generate finer grid for prediction
+# omega_fine = np.logspace(np.log10(min(omega)), np.log10(max(omega)), 1000)
+# X_fine = np.log10(omega_fine).reshape(-1, 1)
+
+# # Predict using the model
+# Y_pred_fine, Y_var_fine = model.predict(X_train, Y_train, X_fine)
+# Y_std = np.sqrt(Y_var_fine)
+
+# # Define filename for saving
+# png_name = "gp_gain_spline_more"
+
+# # Plot the GPR results for gain
+# plt.figure(figsize=(10, 6))
+# # Plot original data points
+# plt.semilogx(omega, 20*np.log10(sys_gain_raw), 'b.', markersize=3, alpha=0.5, label='Raw data')
+# # Plot training and test data points
+# plt.semilogx(10**X_test, Y_test, 'mo', markersize=6, label='Test data')
+# plt.semilogx(10**X_train, Y_train, 'ro', markersize=6, label='Training data')
+# # Plot GPR prediction
+# plt.semilogx(omega_fine, Y_pred_fine, 'g-', linewidth=2, label='GPR prediction')
+# # Add confidence bounds (±2 standard deviations)
+# plt.semilogx(omega_fine, (Y_pred_fine + 2*Y_std), 'g--', linewidth=1, alpha=0.5)
+# plt.semilogx(omega_fine, (Y_pred_fine - 2*Y_std), 'g--', linewidth=1, alpha=0.5)
+# # Add MSE text to plot
+# plt.text(0.05, 0.05, f"Train MSE: {mse_train:.4f}\nTest MSE: {mse_test:.4f}", 
+#   transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
+
+# plt.xlabel('ω [rad/sec]', fontsize=16)
+# plt.ylabel('20*log₁₀|G(jω)| ', fontsize=16)
+# plt.title('Bode Gain plot with GPR (Train/Test Split)', fontsize=16)
+# plt.legend(fontsize=12, loc='best')
+# plt.grid(True)
+# plt.savefig(f"/root/gauss_process/result/{png_name}_output.png")
+# plt.close()
+
+
+# if calculate_time:
+#   end = time.time()
+#   elapsed_time = end - start
+#   print(f"Elapsed time: {elapsed_time:.2f} seconds")

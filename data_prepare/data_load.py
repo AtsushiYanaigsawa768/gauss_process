@@ -3,6 +3,8 @@ from numpy import genfromtxt, hstack, vstack, logspace, abs, angle
 from numpy.random import randn
 from sklearn.model_selection import train_test_split
 from pathlib import Path
+from scipy.optimize import least_squares
+import matplotlib.pyplot as plt
 
 def data_loader(
     data_dir: str = "data_prepare",
@@ -64,9 +66,59 @@ def data_loader(
     Y_train = Y_all[train_idx]
     Y_test  = Y_all[test_idx]
 
-    return X_train, X_test, Y_train, Y_test, omega, sys_gain_raw
+    return X_train, X_test, Y_train, Y_test, omega, sys_gain_raw,arg_g_raw
+
 if __name__ == "__main__":
-  X_train, X_test, Y_train, Y_test, omega, sys_gain_raw = data_loader()
-  # print(f"X_train: {X_train.shape}, Y_train: {Y_train.shape}")
-  # print(f"X_test: {X_test.shape}, Y_test: {Y_test.shape}")
-  # print(f"omega: {omega.shape}, sys_gain_raw: {sys_gain_raw.shape}")
+    # 1) データを読み込む
+    X_train, X_test, Y_train, Y_test, omega, sys_gain_raw, arg_g_raw = data_loader(
+        data_dir="result",
+        file_pattern="*.dat",
+        train_ratio=1.0,      # ここでは全データを使う
+        random_state=0
+    )
+
+    # 2) 複素周波数応答 G(jω) を組み立て
+    G = sys_gain_raw * np.exp(1j * arg_g_raw)
+    s = 1j * omega
+
+    # 3) 特異点周波数 b2 を探索（振幅最小点の ω^2 + 0.01）
+    n60 = int(0.6 * omega.size)
+    zpid = np.argmin(np.abs(G[:n60]))
+    b1 = 1.0
+    b2 = omega[zpid]**2 + 0.01
+
+    # 4) モデル定義
+    def model(p, s):
+        num = b1 * s**2 + b2
+        den = p[0]*s**4 + p[1]*s**3 + p[2]*s**2 + p[3]*s + p[4]
+        return num / den
+
+    # 5) 残差関数
+    def residuals(p):
+        D = model(p, s) - G
+        return np.concatenate([D.real, D.imag])
+
+    # 6) パラメータ推定
+    best_p = None
+    best_cost = np.inf
+    for _ in range(30):
+        p0 = np.random.rand(5) * 1e5
+        res = least_squares(residuals, p0, method='lm')
+        if res.cost < best_cost:
+            best_cost, best_p = res.cost, res.x
+
+    print("Best parameters:", best_p)
+
+    # 7) Nyquist プロット
+    G_fit = model(best_p, s)
+
+    plt.figure()
+    plt.plot(G.real, G.imag, 'b*', label='Data')
+    plt.plot(G_fit.real, G_fit.imag, 'r-', lw=2, label='Fit')
+    plt.xlabel('Re G(jω)')
+    plt.ylabel('Im G(jω)')
+    plt.title('Nyquist Plot')
+    plt.grid(True)
+    plt.legend()
+    plt.axis('equal')
+    plt.show()
