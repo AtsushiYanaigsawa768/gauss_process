@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from pathlib import Path
 
 def data_loader(
-    data_dir: str = "data_prepare",
+    data_dir: str = "./data_prepare",
     file_pattern: str = "*.csv",
     train_ratio: float = 0.2,
     random_state: int = 20
@@ -45,24 +45,32 @@ def data_loader(
         idxs = [g[i] for g in groups]
         sets.append(idxs)
 
-    # 5) セット単位で訓練／テストに分割
-    train_sets, test_sets = train_test_split(
-        sets, train_size=train_ratio, random_state=random_state
-    )
-    print(f"Train sets: {len(train_sets)}, Test sets: {len(test_sets)}")
-
-    # フラットなインデックスリストに戻す
-    train_idx = np.concatenate(train_sets)
-    test_idx  = np.concatenate(test_sets)
+    # 5) セット単位で訓練／テストに分割（train_ratio == 1 の場合は全て訓練用）
+    if train_ratio == 1.0:
+        print("train_ratio=1.0 → テストデータなし（全て訓練データとして使用）")
+        train_idx = np.arange(len(omega))
+        test_idx = None
+    else:
+        train_sets, test_sets = train_test_split(
+            sets, train_size=train_ratio, random_state=random_state
+        )
+        print(f"Train sets: {len(train_sets)}, Test sets: {len(test_sets)}")
+        # フラットなインデックスリストに戻す
+        train_idx = np.concatenate(train_sets)
+        test_idx  = np.concatenate(test_sets)
 
     # 6) 前処理（log変換）して X, Y を作成
     X_all = np.log10(omega).reshape(-1, 1)
     Y_all = np.log10(sys_gain_raw) * 20
 
     X_train = X_all[train_idx]
-    X_test  = X_all[test_idx]
     Y_train = Y_all[train_idx]
-    Y_test  = Y_all[test_idx]
+
+    if test_idx is None:
+        X_test, Y_test = None, None
+    else:
+        X_test = X_all[test_idx]
+        Y_test = Y_all[test_idx]
 
     return X_train, X_test, Y_train, Y_test, omega, sys_gain_raw
 if __name__ == "__main__":

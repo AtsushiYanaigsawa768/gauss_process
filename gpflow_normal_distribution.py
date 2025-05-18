@@ -5,9 +5,8 @@ import gpflow
 import warnings
 import data_prepare.data_load as data_loader
 from data_prepare.accuracy import accuracy
-import os
-import matplotlib as mpl
 warnings.filterwarnings('ignore')
+import os
 
 def plot_model(model):
     # Create fine grid for predictions
@@ -41,40 +40,20 @@ def plot_model(model):
     os.makedirs("/root/gauss_process/result", exist_ok=True)
     plt.savefig("/root/gauss_process/result/gpflow_gaussian.png")
     plt.close()
+
 # Import data
 X_train, X_test, Y_train, Y_test, omega, sys_gain_raw = data_loader.data_loader(train_ratio=1)
-# Convert to float32 for TensorFlow compatibility
-# Convert to float64 for GPflow compatibility
+# Convert to float64 for GPflow
 X_train = X_train.astype(np.float64)
 Y_train = Y_train.astype(np.float64).reshape(-1, 1)
-# X_test = X_test.astype(np.float64)
-# Y_test = Y_test.astype(np.float64).reshape(-1, 1)
-# Prepare for optional test‐set plotting and nicer figures
-# If X_test or Y_test is None (or empty), we won’t plot test points or compute MSE
-if X_test is None or Y_test is None or X_test.size == 0 or Y_test.size == 0:
-    plot_with_test = False
-else:
-    plot_with_test = True
+# X_test  = X_test.astype(np.float64)
+# Y_test  = Y_test.astype(np.float64).reshape(-1, 1)
 
-# Apply a clean style without altering axes limits or scales
-mpl.rcParams.update({
-    "figure.figsize": (10, 6),
-    "font.size": 12,
-    "axes.grid": True,
-    "legend.fontsize": 10,
-    "lines.linewidth": 1.5,
-    "lines.markersize": 6,
-})
-
-# You can now use the `plot_with_test` flag inside plot_model:
-#   if plot_with_test:
-#       …plot test points and compute MSE…
-
-# Create and train GPflow model with Student-t likelihood
+# Create and train GPflow model with Gaussian likelihood
 model = gpflow.models.VGP(
     data=(X_train, Y_train),
     kernel=gpflow.kernels.SquaredExponential(),
-    likelihood=gpflow.likelihoods.StudentT(),
+    likelihood=gpflow.likelihoods.Gaussian(),  # ← ここを変更
 )
 
 # Optimize the model
