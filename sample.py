@@ -99,6 +99,21 @@ def main():
     plt.savefig("_nyquist.png", dpi=300)
     plt.show()
 
+    # --- Save predicted data to CSV ---
+    # Combine omega_test, predicted real part, and predicted imaginary part
+    # The omega_test is already defined and used for predictions.
+    # y_real_pred and y_imag_pred are the predictions on omega_test.
+    
+    output_data = np.column_stack((omega_test, y_real_pred_test, y_imag_pred_test))
+    
+    # Define CSV file path
+    csv_filepath = Path("predicted_G_values.csv")
+    
+    # Save to CSV
+    header = "omega,Re_G,Im_G"
+    np.savetxt(csv_filepath, output_data, delimiter=",", header=header, comments='')
+    
+    print(f"Predicted G values saved to {csv_filepath}")
 if __name__ == "__main__":
     main()
 
