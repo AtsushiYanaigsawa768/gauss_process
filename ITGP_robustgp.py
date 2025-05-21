@@ -61,7 +61,7 @@ def main():
         X, y_mag_db,
         alpha1=0.50,   # trim fraction lower
         alpha2=0.975,   # trim fraction upper
-        nsh=2,
+        nsh=15,
         ncc=2,
         nrw=1
     )
@@ -72,7 +72,7 @@ def main():
         X, y_phase,
         alpha1=0.50,
         alpha2=0.975,
-        nsh=2,
+        nsh=15,
         ncc=2,
         nrw=1
     )
