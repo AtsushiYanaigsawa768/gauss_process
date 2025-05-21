@@ -32,28 +32,24 @@ def residuals(params, omega, G_meas):
 
 def main():
     # --- 1) データ読み込み・前処理 ----------------------------
-    # DEFAULT_DIR = Path("data_prepare")
-    # dir_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_DIR
-    # dat_files = sorted(dir_path.glob("*.dat"))
-    # if not dat_files:
-    #     raise FileNotFoundError(f"No .dat files found in '{dir_path}'")
-    # omega_list, mag_list, phase_list = [], [], []
-    # for f in dat_files:
-    #     w, m, p = load_bode_data(f)
-    #     omega_list.append(w)
-    #     mag_list.append(m)
-    #     phase_list.append(p)
-    # omega = np.hstack(omega_list)
-    # mag   = np.hstack(mag_list)
-    # phase = np.hstack(phase_list)
-    # idx = np.argsort(omega)
-    # omega, mag, phase = omega[idx], mag[idx], phase[idx]
-    # G_meas = mag * np.exp(1j * phase)
-
-    DEFAULT_FILE = Path("data_prepare/SKE2024_data16-Apr-2025_1819.dat")
-    filepath = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FILE
-    omega, mag, phase = load_bode_data(filepath)
+    DEFAULT_DIR = Path("data_prepare")
+    dir_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_DIR
+    dat_files = sorted(dir_path.glob("*.dat"))
+    if not dat_files:
+        raise FileNotFoundError(f"No .dat files found in '{dir_path}'")
+    omega_list, mag_list, phase_list = [], [], []
+    for f in dat_files:
+        w, m, p = load_bode_data(f)
+        omega_list.append(w)
+        mag_list.append(m)
+        phase_list.append(p)
+    omega = np.hstack(omega_list)
+    mag   = np.hstack(mag_list)
+    phase = np.hstack(phase_list)
+    idx = np.argsort(omega)
+    omega, mag, phase = omega[idx], mag[idx], phase[idx]
     G_meas = mag * np.exp(1j * phase)
+
     # --- 2) lsqpmlin 相当の多項式モデルフィッティング ------
     # モデル: (b1·s^2 + b2) / (p1·s^4 + p2·s^3 + p3·s^2 + p4·s + p5)
     b1 = 1.0
