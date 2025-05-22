@@ -115,35 +115,45 @@ yhat = np.zeros(N)
 err = np.zeros(N)
 
 # 5) Real-time (offline replay) loop
-plt.figure(figsize=(10, 8), num='Real-Time FIR Identification')
+plt.figure(figsize=(10, 12), num='Real-Time FIR Identification')
 
-ax1 = plt.subplot(2, 1, 1)
-h_meas, = ax1.plot([], [], 'k', label='Measured')
-h_pred, = ax1.plot([], [], 'r--', label='Predicted')
+ax1 = plt.subplot(3, 1, 1)
+h_meas, = ax1.plot([], [], 'k', label='Measured y')
+h_pred, = ax1.plot([], [], 'r--', label='Predicted ŷ')
 ax1.grid(True)
-ax1.legend()
-ax1.set_xlabel('sample n')
+ax1.legend(loc='upper right')
 ax1.set_ylabel('y')
+ax1.set_title('Output vs Prediction')
 
-ax2 = plt.subplot(2, 1, 2)
-h_err, = ax2.plot([], [], 'b')
+ax2 = plt.subplot(3, 1, 2)
+h_err, = ax2.plot([], [], 'b', label='Error e')
 ax2.grid(True)
-ax2.set_xlabel('sample n')
-ax2.set_ylabel('error')
+ax2.legend(loc='upper right')
+ax2.set_ylabel('Error')
+ax2.set_title('Prediction Error')
 
-plt.ion()  # Turn on interactive mode
+ax3 = plt.subplot(3, 1, 3)
+h_para, = ax3.plot([], [], 'm-o', label='h')
+ax3.grid(True)
+ax3.legend(loc='upper right')
+ax3.set_xlabel('parameter index')
+ax3.set_ylabel('magnitude')
+ax3.set_title('FIR Coefficients Magnitude')
+ax3.set_xlim(1, L)
+
+plt.ion()
 plt.show()
 
 for n in range(N):
   # Update regressor buffer φ[n] = [u[n],u[n-1],...,u[n-L+1]]
   phi = np.roll(phi, 1)
   phi[0] = u[n]
-  
+
   if n >= L - 1:
     # Prediction
     yhat[n] = np.dot(phi, h)
     err[n] = y[n] - yhat[n]
-    
+
     # RLS update
     K = np.dot(P, phi) / (lambda_factor + np.dot(phi, np.dot(P, phi)))
     h = h + K * err[n]
@@ -151,21 +161,26 @@ for n in range(N):
   else:
     yhat[n] = 0
     err[n] = y[n]
-  
+
   # Live plot refresh
-  if (n % plot_rate == 0) or (n == N-1):
-    n_range = np.arange(n+1)
-    h_meas.set_data(n_range, y[:n+1])
-    h_pred.set_data(n_range, yhat[:n+1])
-    h_err.set_data(n_range, err[:n+1])
-    
-    ax1.relim()
-    ax1.autoscale_view()
-    ax2.relim()
-    ax2.autoscale_view()
-    
+  if (n % plot_rate == 0) or (n == N - 1):
+    n_range = np.arange(n + 1)
+    h_meas.set_data(n_range, y[:n + 1])
+    h_pred.set_data(n_range, yhat[:n + 1])
+    h_err.set_data(n_range, err[:n + 1])
+
+    # update parameter magnitude plot
+    x_idx = np.arange(1, L + 1)
+    h_para.set_data(x_idx, h)
+    ax3.relim()
+    ax3.autoscale_view()
+
+    ax1.relim(); ax1.autoscale_view()
+    ax2.relim(); ax2.autoscale_view()
+
     plt.draw()
     plt.pause(0.001)
+
 
 # 6) Error metrics
 rmse = np.sqrt(np.mean(err[L:]**2))
