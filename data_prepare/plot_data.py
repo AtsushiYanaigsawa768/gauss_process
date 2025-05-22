@@ -71,33 +71,33 @@ def main():
     X_test = np.empty((0,))
   # 確認
   # # 各配列を 1 次元に連結
-  omega     = np.hstack(train_omega_list + test_omega_list)
-  sys_gain  = np.hstack(train_sys_gain_list + test_sys_gain_list)
-  sys_phase = np.hstack(train_sys_phase_list + test_sys_phase_list)
+  # omega     = np.hstack(train_omega_list + test_omega_list)
+  # sys_gain  = np.hstack(train_sys_gain_list + test_sys_gain_list)
+  # sys_phase = np.hstack(train_sys_phase_list + test_sys_phase_list)
 
-  # 複素数を complex128（倍精度 complex）で作成
-  z = sys_gain * np.exp(1j * sys_phase)
+  # # 複素数を complex128（倍精度 complex）で作成
+  # z = sys_gain * np.exp(1j * sys_phase)
 
-  # zが-1, -1に近づいている点は除外
-  z = z[np.abs(z) < 0.8]
+  # # zが-1, -1に近づいている点は除外
+  # z = z[np.abs(z) < 0.8]
 
-  # 実部と虚部
-  real = z.real
-  imag = z.imag
+  # # 実部と虚部
+  # real = z.real
+  # imag = z.imag
 
-  # X のデータを 2 種類の説明変数 (実部, 虚部) として構築
-  # 形状: (サンプル数, 2)
-  X = np.column_stack((real, imag))
+  # # X のデータを 2 種類の説明変数 (実部, 虚部) として構築
+  # # 形状: (サンプル数, 2)
+  # X = np.column_stack((real, imag))
 
-  # プロット
-  plt.figure(figsize=(6,6))
-  plt.scatter(X[:,0], X[:,1], c='blue', s=10)
-  plt.xlabel("Real(sys_gain·e^{i·phase})")
-  plt.ylabel("Imag(sys_gain·e^{i·phase})")
-  plt.title("Real vs Imag")
-  plt.grid(True)
-  plt.axis('equal')
-  plt.show()
+  # # プロット
+  # plt.figure(figsize=(6,6))
+  # plt.scatter(X[:,0], X[:,1], c='blue', s=10)
+  # plt.xlabel("Real(sys_gain·e^{i·phase})")
+  # plt.ylabel("Imag(sys_gain·e^{i·phase})")
+  # plt.title("Real vs Imag")
+  # plt.grid(True)
+  # plt.axis('equal')
+  # plt.show()
   return X_train, X_test, Y_train, Y_test
 
 if __name__ == "__main__":
