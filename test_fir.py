@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 # USER PARAMETERS
 frf_file     = 'new_result/predicted_G_values.csv'  # FRF in CSV: [omega, ReG, ImG]
-io_file      = 'data_flexible.mat'                  # recorded I/O to replay
+io_file      = 'data_hour.mat'                  # recorded I/O to replay
 lambda_factor = 0.995                               # RLS forgetting factor
 energy_cut    = 0.99                                # keep ≥99% of |g| energy
 plot_rate     = 100                                 # samples between plot refreshes
@@ -73,9 +73,9 @@ for name, arr in io_data.items():
     break
 
 # 1列目 → time, 2列目 → output, 3列目 → input
-time = mat[0,:].ravel()
-y    = mat[1,:].ravel()
-u    = mat[2,:].ravel()
+# time = mat[0,:].ravel()
+# y    = mat[1,:].ravel()
+# u    = mat[2,:].ravel()
 # 100000 samples of time, output, inputだけ読み取る
 time = mat[0,:100000].ravel()
 y    = mat[1,:100000].ravel()
