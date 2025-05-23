@@ -24,7 +24,7 @@ def load_bode_data(filepath: Path):
 
 def main():
     # Configuration
-    N_TEST_POINTS = 500
+    N_TEST_POINTS = 50000
 
     # Data loading code unchanged
     DEFAULT_DIR = Path("data_prepare")
@@ -96,6 +96,21 @@ def main():
     y_imag_std = y_imag_std.ravel()
     
     # Skip Bode plots of magnitude and phase
+    # Calculate variances from standard deviations
+    y_real_var = y_real_std ** 2
+    y_imag_var = y_imag_std ** 2
+
+    # Combine omega_test with variance values into a single array
+    variance_data = np.column_stack((omega_test, y_real_var, y_imag_var))
+
+    # Define CSV file path for variance data
+    variance_csv_filepath = Path("predicted_G_variances.csv")
+
+    # Save variance data to CSV
+    variance_header = "omega,Re_G_variance,Im_G_variance"
+    np.savetxt(variance_csv_filepath, variance_data, delimiter=",", header=variance_header, comments='')
+
+    print(f"G variance values saved to {variance_csv_filepath}")
 
     # Helper: Hampel filter for real‐valued 1D arrays
     def hampel_filter(x, window_size=7, n_sigmas=3):
