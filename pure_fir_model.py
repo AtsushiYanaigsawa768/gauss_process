@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import math
 
 # USER PARAMETERS
-frf_file    = './fir/data/mini_predicted_G_values.csv'  # FRF in CSV: [omega, ReG, ImG]
+frf_file    = './fir/data/predicted_G_values.csv'  # FRF in CSV: [omega, ReG, ImG]
 io_file     = './fir/data/data_hour.mat'                  # recorded I/O to replay
 model_order = 50                               # FIR model order (タップ数)
 n_ifft       = 1024                           # IFFT 点数（FFT 長）
@@ -40,9 +40,9 @@ for name, arr in io_data.items():
     if not name.startswith('__'):
         mat = arr
         break
-time = mat[0,:100000].ravel()
-y    = mat[1,:100000].ravel()
-u    = mat[2,:100000].ravel()
+time = mat[0,:10000000].ravel()
+y    = mat[1,:10000000].ravel()
+u    = mat[2,:10000000].ravel()
 
 # 5) Predict output with pure FIR (convolution / lfilter)
 yhat = lfilter(g, 1.0, u)
