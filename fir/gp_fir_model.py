@@ -4,7 +4,7 @@ from scipy.io import loadmat
 from numpy.lib.stride_tricks import sliding_window_view
 
 #––– データ読み込み（おおむね元コードと同じ）––––––––––––––––––––––––––––––––––––––––––––––––––––
-io = loadmat('data_hour.mat')
+io = loadmat('./fir/data/data_hour.mat')
 for k,v in io.items():
   if not k.startswith('__'):
     mat = v; break

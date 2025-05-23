@@ -1,51 +1,90 @@
-# ファイル関係
-model_result: 各実験の結果が置かれています。
-`original.png` : 生データを図にしたものです。
-`システム同定.png` : 共通課題で作成した、システム同定の結果です。
-`remove_noise+RBF.png` : ノイズ除去後に、RBF(Const * RBF)を適応させたものです。
-`RBF+RBF.png` : C*RBF + C*RBF というkernelを用いて実行したものです。
+# 目次
 
-result:　`gaussian.py`を実行すると結果が出力されるフォルダです。
-`merged.dat`が、生データの保存場所です。
+- [概要](#概要)
+- [環境構築](#環境構築)
+- [ファイルの関係](#ファイルの関係)
+- [各ファイルの詳細情報](#各ファイルの詳細情報)
+  - [gp ファイル](#gp-ファイル)
+  - [GP/dataファイル](#gpdataファイル)
+  - [GP/output ファイル](#gpoutput-ファイル)
+  - [firファイル](#firファイル)
 
-`gaussian.py`が、pythonのscikit-learnを用いてGBFを実行するファイルです。
+# 概要
+フレキシブルリンクのシステム同定
+まず、角周波数と伝達関数のデータに対してガウス過程回帰(GP)を用い、その後それらの情報から、FIRモデルで入力に対するゲイン(フレキシブルリンクがどれだけ動いたのか)を予測する。
 
-以下、参照した研究
+# 環境構築
 
-`k_neighber_gauss_noise.py` `gauss_noise.py`:https://papers.nips.cc/paper_files/paper/2011/file/a8e864d04c95572d1aece099af852d0a-Paper.pdf
 
-`ITGP.py` : https://arxiv.org/abs/2011.11057
 
-`Dust_data` : 現在必要ないデータです
+# ファイルの関係
 
-# Gaussian.py
+<pre>
 
-## Hyper Parameterの設定
-`png_name`: 出力されるpngの名前を指定することが出来ます。
-`calculate_time` : Trueの場合、どれぐらい実行に時間がかかったかを出力します。
+gauss_process
+├── README.md
+├── .gitignore
+├── gp
+│   ├── output
+│   ├── result 
+│   ├── data
+│   └── *.py -> detailed below
+├──fir
+│  ├── result 
+│  └── *.py -> detailed below
+└── adhoc
 
-以下のHyper Parameterは、余り変更することを推奨しません。
-`noise_filter` : Trueの場合、Hampleフィルターを利用することが出来ます。
-`test_set_ration`: テストデータに使われる割合が、どれぐらいかを指定します。データ数ができるだけ少なくしたいので、今は0.8に指定しています。
+</pre>
 
-## kernelの設定
-ガウス過程回帰が使用できる、カーネルの種類を表しています。
-kernel_setには、単一のカーネルが、
-kernels_modelには、複数のカーネルを合したものが入っています。
+`adhoc` : これまで試行錯誤した際に使用したデータ 実装に関係ない
 
-```
-kernel = const * rbf
-```
-や、
+`fir` :　FIRモデルの構築の際に使用したモデル、データの一覧
 
-```
-kernel = kernels_model[0]
-```
-のように使用してください。
+`Gauss_Process`: ガウス過程回帰の際に使用したモデル、データの一覧
 
-## RBFの設定
-詳しくは`gauss.py`を参照してください。
+# 各ファイルの詳細情報
 
-## 実行方法
-`sklearn`や`matplotlib`さえあれば、実行できると思います。
-複雑になる場合は別途、決めた方がいいかもしれません。
+## gp ファイル
+
+#### `gpflow_t_distribution.py`
+
+ガウス過程回帰の際にT分布を仮定したもの
+
+#### `ITGP_robustgp.py`
+
+ガウス過程回帰の一種である、ITGPを実装したもの
+レポジトリ：　https://github.com/syrte/robustgp
+論文：　　　　https://arxiv.org/abs/2011.11057
+
+#### `k_neighber_gauss_noisey.py`
+
+注意：これはアルゴリズムを実装しただけで、現在の環境に適応させていない。
+
+論文：https://papers.nips.cc/paper_files/paper/2011/file/a8e864d04c95572d1aece099af852d0a-Paper.pdf
+
+#### `linear.py`
+
+ガウス過程回帰ではなく、線形補完を用いたもの。→　`FIR`の場面で用いる
+
+#### `lsqmpmlin.py`
+
+非線形最小二乗法を用いたもの。ガウス過程回帰の比較用に用いた。
+
+#### `sample.py`
+
+`scikit-learn`で標準的に実装されているGPを実装したもの。
+
+## GP/dataファイル
+
+これまで同じ実験機を用いて集められたデータを収集したもの。
+
+## GP/output ファイル
+
+GPファイル内のpyファイルを実行した結果はこのファイルに与えられる。
+
+## firファイル
+
+#### `pure_fir_model.py`
+
+実行するにはmatファイルが必要となる。
+詳細はpyファイルを参照すること。

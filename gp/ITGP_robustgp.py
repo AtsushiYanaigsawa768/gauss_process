@@ -159,7 +159,7 @@ def main():
     plt.legend()
     plt.grid(True, which='both', ls='--')
     plt.tight_layout()
-    plt.savefig("_real_fit.png", dpi=300)
+    plt.savefig("./gp/output/_real_fit.png", dpi=300)
     plt.show()
 
     # Imaginary part plot: measured vs. predicted
@@ -180,7 +180,7 @@ def main():
     plt.legend()
     plt.grid(True, which='both', ls='--')
     plt.tight_layout()
-    plt.savefig("_imag_fit.png", dpi=300)
+    plt.savefig("./gp/output/_imag_fit.png", dpi=300)
     plt.show()
     # Compute MSE on complex Nyquist points
     mse = np.mean(np.abs(G_filt - H_pred_meas)**2)
@@ -203,7 +203,7 @@ def main():
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("_nyquist.png", dpi=300)
+    plt.savefig("./gp/output/_nyquist.png", dpi=300)
     plt.show()
 
     # --- Save predicted data to CSV ---
@@ -214,7 +214,7 @@ def main():
     output_data = np.column_stack((omega_test, y_real_pred, y_imag_pred))
     
     # Define CSV file path
-    csv_filepath = Path("predicted_G_values.csv")
+    csv_filepath = Path("./gp/output/predicted_G_values.csv")
     
     # Save to CSV
     header = "omega,Re_G,Im_G"

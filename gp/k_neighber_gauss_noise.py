@@ -178,7 +178,7 @@ def load_bode_data(filepath):
         sys.exit(1)
 
 # Configuration
-DEFAULT_DATAFILE = "data_prepare/SKE2024_data16-Apr-2025_1819.dat"
+DEFAULT_DATAFILE = "./gp/data/SKE2024_data16-Apr-2025_1819.dat"
 N_TEST_POINTS = 500
 
 # Data file path

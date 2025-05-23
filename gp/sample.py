@@ -7,7 +7,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel
 from sklearn.preprocessing import StandardScaler
 
-DEFAULT_DATAFILE = "data_prepare/SKE2024_data16-Apr-2025_1819.dat"
+DEFAULT_DATAFILE = "./gp/data/SKE2024_data16-Apr-2025_1819.dat"
 N_TEST_POINTS = 500
 
 def load_bode_data(filepath: Path):
@@ -96,7 +96,7 @@ def main():
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("_nyquist.png", dpi=300)
+    plt.savefig("./gp/output/sample_nyquist.png", dpi=300)
     plt.show()
 
     # --- Save predicted data to CSV ---
@@ -107,7 +107,7 @@ def main():
     output_data = np.column_stack((omega_test, y_real_pred_test, y_imag_pred_test))
     
     # Define CSV file path
-    csv_filepath = Path("predicted_G_values.csv")
+    csv_filepath = Path("./gp/output/predicted_G_values.csv")
     
     # Save to CSV
     header = "omega,Re_G,Im_G"

@@ -31,7 +31,7 @@ def make_student_t_vgp(X: tf.Tensor, Y: tf.Tensor,
 
 def main():
     # --- load data ---
-    DEFAULT_FILE = Path("data_prepare/SKE2024_data16-Apr-2025_1819.dat")
+    DEFAULT_FILE = Path("./gp/data/SKE2024_data16-Apr-2025_1819.dat")
     filepath = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FILE
     omega, mag, phase = load_bode_data(filepath)
     G_meas = mag * np.exp(1j * phase)
@@ -76,7 +76,8 @@ def main():
                      color='r', alpha=0.2, label='±2σ')
     plt.xlabel('ω (rad/s)'); plt.ylabel('Re{G}')
     plt.legend(); plt.grid(which='both', ls='--')
-    plt.tight_layout(); plt.show()
+    plt.tight_layout(); 
+    plt.show()
 
     # prepare Nyquist data and compute mse on training set
     G_filt = G_meas
@@ -95,7 +96,8 @@ def main():
                      color='m', alpha=0.2, label='±2σ')
     plt.xlabel('ω (rad/s)'); plt.ylabel('Im{G}')
     plt.legend(); plt.grid(which='both', ls='--')
-    plt.tight_layout(); plt.show()
+    plt.tight_layout(); 
+    plt.show()
 
     order = np.argsort(omega_test)
     plt.figure(figsize=(10, 6))
@@ -113,7 +115,7 @@ def main():
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.savefig("_nyquist.png", dpi=300)
+    plt.savefig("./gp/output/_nyquist.png", dpi=300)
     plt.show()
 
     # --- Save predicted data to CSV ---

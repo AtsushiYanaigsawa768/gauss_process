@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 import math
 
 # USER PARAMETERS
-frf_file    = 'mini_predicted_G_values.csv'  # FRF in CSV: [omega, ReG, ImG]
-io_file     = 'data_hour.mat'                  # recorded I/O to replay
+frf_file    = './fir/data/mini_predicted_G_values.csv'  # FRF in CSV: [omega, ReG, ImG]
+io_file     = './fir/data/data_hour.mat'                  # recorded I/O to replay
 model_order = 50                               # FIR model order (タップ数)
 n_ifft       = 1024                           # IFFT 点数（FFT 長）
 
@@ -33,6 +33,7 @@ G_full = np.concatenate([np.conj(G_uni[-2:0:-1]), G_uni])
 # 2) Impulse response via IFFT
 g = np.real(np.fft.ifft(np.fft.ifftshift(G_full)))
 
+print(g.shape)
 # 4) Load I/O data and extract u,y
 io_data = loadmat(io_file)
 for name, arr in io_data.items():
