@@ -4,14 +4,6 @@
 """
 
 """
-1: scikit-learnのGaussianProcessRegressorを用いて、Gauss Process Regressionを実行するサンプルコードです。
-"""
-from gp.sample import main as sample_main
-sample_main()
-
-
-
-"""
 2: gpflow_t_distribution.py t分布を仮定したGaussian Process Regression
 """
 from gp.gpflow_t_distribution import main as gpflow_t_main
@@ -22,12 +14,6 @@ gpflow_t_main()
 """
 from gp.linear import main as linear_main
 linear_main()
-
-"""
-4:lsqmpmlin.py 最小二乗法を用いたもの(ガウス過程回帰ではない)
-"""
-from gp.lsqmpmlin import main as lsqmpmlin_main
-lsqmpmlin_main()
 
 """
 5:ITGP_robustgp.py ITGPを用いたもの

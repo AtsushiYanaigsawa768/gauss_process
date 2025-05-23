@@ -7,8 +7,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # USER PARAMETERS
-frf_csv = 'predicted_G_values.csv'  # FRF in CSV: [omega, ReG, ImG]
-io_file = 'data_hour.mat'           # recorded I/O to replay
+frf_csv = './fir/data/predicted_G_values.csv'  # FRF in CSV: [omega, ReG, ImG]
+io_file = './fir/data/data_hour.mat'           # recorded I/O to replay
 lambda_factor = 0.995               # RLS forgetting factor
 energy_cut = 0.99                   # keep ≥99% of |g| energy
 plot_rate = 100                     # samples between plot refreshes

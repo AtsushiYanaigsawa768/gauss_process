@@ -15,7 +15,13 @@
 
 # 環境構築
 
-
+```
+conda create --name GaussProcess python=3.11
+conda activate GaussProcess
+git clone https://github.com/AtsushiYanaigsawa768/gauss_process.git
+cd gauss_process
+pip install -r requirements.txt
+```
 
 # ファイルの関係
 
@@ -46,9 +52,9 @@ gauss_process
 
 ## gp ファイル
 
-#### `gpflow_t_distribution.py`
+<!-- #### `gpflow_t_distribution.py`
 
-ガウス過程回帰の際にT分布を仮定したもの
+ガウス過程回帰の際にT分布を仮定したもの -->
 
 #### `ITGP_robustgp.py`
 
@@ -66,13 +72,13 @@ gauss_process
 
 ガウス過程回帰ではなく、線形補完を用いたもの。→　`FIR`の場面で用いる
 
-#### `lsqmpmlin.py`
+<!-- #### `lsqmpmlin.py`
 
 非線形最小二乗法を用いたもの。ガウス過程回帰の比較用に用いた。
 
 #### `sample.py`
 
-`scikit-learn`で標準的に実装されているGPを実装したもの。
+`scikit-learn`で標準的に実装されているGPを実装したもの。 -->
 
 ## GP/dataファイル
 
@@ -88,3 +94,15 @@ GPファイル内のpyファイルを実行した結果はこのファイルに�
 
 実行するにはmatファイルが必要となる。
 詳細はpyファイルを参照すること。
+
+`fir/data/`のところに入力と出力のmatファイルを入れることで、動作する。
+
+#### fir/data/ファイル
+
+フレキシブルリンクの入力と出力の情報が入ったmatファイルを入れる。
+
+csvファイルには、omegaと伝達関数の実部と虚部の値が入っている。
+
+`mini_predicted_G_value.csv`: 500行程度の小さなデータ　`gp/ITGP_robustgp.py`ITGPを用いて出力した。
+`predicted_G_value.csv`: 50000行程度の大きなデータ　`gp/ITGP_robustgp.py`を用いて出力した。
+`linear_predicted_G_values.csv`: 500行程度の小さなデータ　`gp/linear.py`を用いて出力した。
