@@ -40,9 +40,9 @@ for name, arr in io_data.items():
     if not name.startswith('__'):
         mat = arr
         break
-time = mat[0,:10000000].ravel()
-y    = mat[1,:10000000].ravel()
-u    = mat[2,:10000000].ravel()
+time = mat[0,:100000].ravel()
+y    = mat[1,:100000].ravel()
+u    = mat[2,:100000].ravel()
 
 # 5) Predict output with pure FIR (convolution / lfilter)
 yhat = lfilter(g, 1.0, u)

@@ -1,5 +1,8 @@
+# /d:/Coding/gauss_process/gp/gpflow_t_distribution.py
 import sys
 from pathlib import Path
+from typing import List, Tuple
+
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -9,12 +12,46 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def load_bode_data(filepath: Path):
+# ------------------------- IO utils ------------------------- #
+def load_bode_data(filepath: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load one *.dat file (ω, |G|, ∠G)."""
     data = np.loadtxt(filepath, delimiter=",")
     omega, mag, phase = data
     return omega, mag, phase
 
 
+def split_train_test(data_dir: Path,
+                     test_filenames: List[str]) -> Tuple[Tuple[np.ndarray, ...],
+                                                         Tuple[np.ndarray, ...]]:
+    """Read all *.dat files, split into train / test."""
+    train_files, test_files = [], []
+    for f in data_dir.glob("*.dat"):
+        (test_files if f.name in test_filenames else train_files).append(f)
+
+    def _concat(files: List[Path]):
+        omegas, mags, phases = [], [], []
+        for fp in files:
+            o, m, p = load_bode_data(fp)
+            omegas.append(o); mags.append(m); phases.append(p)
+        return (np.concatenate(omegas),
+                np.concatenate(mags),
+                np.concatenate(phases))
+
+    return _concat(train_files), _concat(test_files)
+
+
+# --------------------- Hampel filter mask -------------------- #
+def hampel_mask(values: np.ndarray, n_sigmas: float = 3.0) -> np.ndarray:
+    """Return Boolean mask (True = keep) using global Hampel filter."""
+    median = np.median(values)
+    mad = np.median(np.abs(values - median))
+    if mad == 0:
+        return np.full(values.shape, True, dtype=bool)
+    thresh = n_sigmas * 1.4826 * mad
+    return np.abs(values - median) <= thresh
+
+
+# ---------------------- GP training util --------------------- #
 def make_student_t_vgp(X: tf.Tensor, Y: tf.Tensor,
                        kernel=None,
                        likelihood=None,
@@ -25,114 +62,75 @@ def make_student_t_vgp(X: tf.Tensor, Y: tf.Tensor,
         likelihood = gpflow.likelihoods.StudentT()
     model = gpflow.models.VGP(data=(X, Y), kernel=kernel, likelihood=likelihood)
     opt = gpflow.optimizers.Scipy()
-    opt.minimize(model.training_loss, model.trainable_variables, options={"maxiter": maxiter})
+    opt.minimize(model.training_loss, model.trainable_variables,
+                 options={"maxiter": maxiter}, method="L-BFGS-B")
     return model
 
 
+# ------------------------------ main ------------------------- #
 def main():
-    # --- load data ---
-    DEFAULT_FILE = Path("./gp/data/SKE2024_data16-Apr-2025_1819.dat")
-    filepath = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FILE
-    omega, mag, phase = load_bode_data(filepath)
-    G_meas = mag * np.exp(1j * phase)
+    DATA_DIR   = Path("./gp/data")
+    TEST_FILES = ["SKE2024_data18-Apr-2025_1205.dat",
+                  "SKE2024_data16-May-2025_1609.dat"]
 
-    # inputs/targets
-    X = np.log10(omega).reshape(-1, 1)
-    y_real = G_meas.real.reshape(-1, 1)
-    y_imag = G_meas.imag.reshape(-1, 1)
+    # ----------- load & split data ----------- #
+    (ω_tr, mag_tr, ph_tr), (ω_te, mag_te, ph_te) = split_train_test(DATA_DIR, TEST_FILES)
 
-    # convert to tf.Tensor
-    X_tf     = tf.convert_to_tensor(X,     dtype=tf.float64)
-    Yreal_tf = tf.convert_to_tensor(y_real, dtype=tf.float64)
-    Yimag_tf = tf.convert_to_tensor(y_imag, dtype=tf.float64)
+    # complex transfer functions
+    G_tr = mag_tr * np.exp(1j * ph_tr)
+    G_te = mag_te * np.exp(1j * ph_te)
 
-    # --- train real/imag GPs ---
-    gp_real = make_student_t_vgp(X_tf, Yreal_tf)
-    gp_imag = make_student_t_vgp(X_tf, Yimag_tf)
+    # TF tensors (log-ω as input)
+    Xtr_tf = tf.convert_to_tensor(np.log10(ω_tr).reshape(-1, 1), dtype=tf.float64)
+    Xte_tf = tf.convert_to_tensor(np.log10(ω_te).reshape(-1, 1), dtype=tf.float64)
 
-    # --- prediction grid ---
-    N_TEST = 500
-    omega_test = np.logspace(np.log10(omega.min()), np.log10(omega.max()), N_TEST)
-    Xtest = np.log10(omega_test).reshape(-1, 1)
-    Xtest_tf = tf.convert_to_tensor(Xtest, dtype=tf.float64)
+    Ytr_real_tf = tf.convert_to_tensor(G_tr.real.reshape(-1, 1), dtype=tf.float64)
+    Ytr_imag_tf = tf.convert_to_tensor(G_tr.imag.reshape(-1, 1), dtype=tf.float64)
 
-    # predict real
-    mean_r, var_r = gp_real.predict_f(Xtest_tf)
-    y_real_pred = mean_r.numpy().ravel()
-    y_real_std  = np.sqrt(var_r.numpy().ravel())
+    # ----------- train GPs (real / imag) ----------- #
+    gp_r = make_student_t_vgp(Xtr_tf, Ytr_real_tf)
+    gp_i = make_student_t_vgp(Xtr_tf, Ytr_imag_tf)
 
-    # predict imag
-    mean_i, var_i = gp_imag.predict_f(Xtest_tf)
-    y_imag_pred = mean_i.numpy().ravel()
-    y_imag_std  = np.sqrt(var_i.numpy().ravel())
+    # ----------- predictions (train & test) ----------- #
+    μr_tr, _ = gp_r.predict_f(Xtr_tf)
+    μi_tr, _ = gp_i.predict_f(Xtr_tf)
+    Ĥ_tr = (μr_tr.numpy().ravel() + 1j * μi_tr.numpy().ravel())
 
-    # --- plotting (same as before) ---
-    plt.figure(figsize=(8, 4))
-    plt.loglog(omega, y_real, 'b.', label='Measured Real')
-    plt.loglog(omega_test, y_real_pred, 'r-', label='Predicted Real')
-    plt.fill_between(omega_test,
-                     y_real_pred - 2 * y_real_std,
-                     y_real_pred + 2 * y_real_std,
-                     color='r', alpha=0.2, label='±2σ')
-    plt.xlabel('ω (rad/s)'); plt.ylabel('Re{G}')
-    plt.legend(); plt.grid(which='both', ls='--')
-    plt.tight_layout(); 
-    plt.show()
+    μr_te, _ = gp_r.predict_f(Xte_tf)
+    μi_te, _ = gp_i.predict_f(Xte_tf)
+    Ĥ_te = (μr_te.numpy().ravel() + 1j * μi_te.numpy().ravel())
 
-    # prepare Nyquist data and compute mse on training set
-    G_filt = G_meas
-    # compute training predictions for mse
-    mean_r_train, _ = gp_real.predict_f(X_tf)
-    mean_i_train, _ = gp_imag.predict_f(X_tf)
-    H_train = mean_r_train.numpy().ravel() + 1j * mean_i_train.numpy().ravel()
-    mse = np.mean(np.abs(H_train - G_filt)**2)
+    # ----------- MSE with Hampel filter ----------- #
+    res_tr = np.abs(Ĥ_tr - G_tr)
+    res_te = np.abs(Ĥ_te - G_te)
 
-    plt.figure(figsize=(8, 4))
-    plt.loglog(omega, y_imag, 'g.', label='Measured Imag')
-    plt.loglog(omega_test, y_imag_pred, 'm-', label='Predicted Imag')
-    plt.fill_between(omega_test,
-                     y_imag_pred - 2 * y_imag_std,
-                     y_imag_pred + 2 * y_imag_std,
-                     color='m', alpha=0.2, label='±2σ')
-    plt.xlabel('ω (rad/s)'); plt.ylabel('Im{G}')
-    plt.legend(); plt.grid(which='both', ls='--')
-    plt.tight_layout(); 
-    plt.show()
+    mask_tr = hampel_mask(res_tr)
+    mask_te = hampel_mask(res_te)
 
-    order = np.argsort(omega_test)
-    plt.figure(figsize=(10, 6))
-    plt.plot(G_filt.real, G_filt.imag, 'b*', markersize=6, label='Filtered Data')
-    H_best = y_real_pred + 1j * y_imag_pred
-    plt.plot(
-        H_best.real[order],
-        H_best.imag[order],
-        'r-', linewidth=2,
-        label='ITGP Est.'
-    )
-    plt.xlabel('Re')
-    plt.ylabel('Im')
-    plt.title(f'Nyquist Plot (MSE: {mse:.4e})')
-    plt.grid(True)
+    mse_tr = np.mean(res_tr[mask_tr] ** 2)
+    mse_te = np.mean(res_te[mask_te] ** 2)
+
+    # ----------- Nyquist plot ----------- #
+    plt.figure(figsize=(8, 6))
+
+    plt.plot(G_tr.real, G_tr.imag, 'b.',  label='Train meas.')
+    plt.plot(Ĥ_tr.real, Ĥ_tr.imag, 'c+', label='GP Train est.')
+
+    plt.plot(G_te.real, G_te.imag, 'g*',  label='Test meas.')
+    plt.plot(Ĥ_te.real, Ĥ_te.imag, 'r^', label='GP Test est.')
+
+    plt.xlabel('Re{G}')
+    plt.ylabel('Im{G}')
+    plt.title('Nyquist (Hampel-filtered MSE)')
+    plt.grid(True, ls='--')
     plt.legend()
+    plt.text(0.02, 0.98,
+             f'Train MSE: {mse_tr:.2e}\nTest MSE: {mse_te:.2e}',
+             transform=plt.gca().transAxes,
+             va='top', ha='left', bbox=dict(facecolor='w', alpha=0.7))
     plt.tight_layout()
-    plt.savefig("./gp/output/_nyquist.png", dpi=300)
+    plt.savefig("./gp/output/nyquist_train_test.png", dpi=300)
     plt.show()
-
-    # --- Save predicted data to CSV ---
-    # Combine omega_test, predicted real part, and predicted imaginary part
-    # The omega_test is already defined and used for predictions.
-    # y_real_pred and y_imag_pred are the predictions on omega_test.
-    
-    output_data = np.column_stack((omega_test, y_real_pred, y_imag_pred))
-    
-    # Define CSV file path
-    csv_filepath = Path("predicted_G_values.csv")
-    
-    # Save to CSV
-    header = "omega,Re_G,Im_G"
-    np.savetxt(csv_filepath, output_data, delimiter=",", header=header, comments='')
-    
-    print(f"Predicted G values saved to {csv_filepath}")
 
 
 if __name__ == "__main__":

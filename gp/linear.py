@@ -6,6 +6,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import warnings
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
 
 warnings.filterwarnings("ignore")
 
@@ -14,120 +16,112 @@ def load_bode_data(filepath: Path):
   omega, mag, phase = data
   return omega, mag, phase
 
-def main():
+def main() -> None:
   N_TEST_POINTS = 500
+  TEST_FILES = {
+    "SKE2024_data18-Apr-2025_1205.dat",
+    "SKE2024_data16-May-2025_1609.dat",
+  }
 
-  # データ読み込み
+  # データ読み込み -----------------------------------------------------------
   DEFAULT_DIR = Path("data_prepare")
   dir_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_DIR
   dat_files = sorted(dir_path.glob("*.dat"))
   if not dat_files:
     raise FileNotFoundError(f"No .dat files found in '{dir_path}'")
-  omega_list, mag_list, phase_list = [], [], []
-  for f in dat_files:
-    w, m, p = load_bode_data(f)
-    omega_list.append(w); mag_list.append(m); phase_list.append(p)
-  omega = np.hstack(omega_list)
-  mag   = np.hstack(mag_list)
-  phase = np.hstack(phase_list)
-  idx = np.argsort(omega)
-  omega, mag, phase = omega[idx], mag[idx], phase[idx]
-  G_meas = mag * np.exp(1j * phase)
 
-  # モデル化対象
-  X       = np.log10(omega).reshape(-1, 1)
-  y_real  = G_meas.real
-  y_imag  = G_meas.imag
+  train_files = [p for p in dat_files if p.name not in TEST_FILES]
+  test_files  = [p for p in dat_files if p.name in TEST_FILES]
+  if not train_files or not test_files:
+    raise RuntimeError("Train / Test split failed. Check file names.")
 
-  # --- ここから線形補間に置き換え ---
-  f_real = interp1d(X.ravel(), y_real, kind='linear', fill_value='extrapolate')
-  f_imag = interp1d(X.ravel(), y_imag, kind='linear', fill_value='extrapolate')
+  def stack(files):
+    w_l, m_l, p_l = [], [], []
+    for f in files:
+      w, m, p = load_bode_data(f)
+      w_l.append(w); m_l.append(m); p_l.append(p)
+    w = np.hstack(w_l); m = np.hstack(m_l); p = np.hstack(p_l)
+    idx = np.argsort(w)
+    return w[idx], m[idx], p[idx]
 
-  # 予測グリッド
-  omega_test = np.logspace(np.log10(omega.min()),
-               np.log10(omega.max()),
-               N_TEST_POINTS)
-  X_test = np.log10(omega_test).reshape(-1, 1)
+  # train & test raw data ---------------------------------------------------
+  w_tr, mag_tr, ph_tr = stack(train_files)
+  w_te, mag_te, ph_te = stack(test_files)
 
-  # 予測値
-  y_real_pred = f_real(X_test.ravel())
-  y_imag_pred = f_imag(X_test.ravel())
-  # 誤差はゼロとみなす
-  y_real_std  = np.zeros_like(y_real_pred)
-  y_imag_std  = np.zeros_like(y_imag_pred)
+  G_tr = mag_tr * np.exp(1j * ph_tr)
+  G_te = mag_te * np.exp(1j * ph_te)
 
-  # 元の測定点での予測（プロット用）
-  y_real_meas_pred = f_real(X.ravel())
-  y_imag_meas_pred = f_imag(X.ravel())
-  H_pred_meas = y_real_meas_pred + 1j*y_imag_meas_pred
+  # log-frequency -----------------------------------------------------------
+  X_tr = np.log10(w_tr).reshape(-1, 1)
+  X_te = np.log10(w_te).reshape(-1, 1)
 
-  # フィルタ関数（そのまま）
-  def hampel_filter(x, window_size=7, n_sigmas=3):
-    x = x.copy(); k = 1.4826
-    L = len(x); half_w = window_size//2
+  # hampel filter -----------------------------------------------------------
+  def hampel_filter(x, window_size: int = 7, n_sigmas: int = 3):
+    x = x.copy(); k = 1.4826; L = len(x); half = window_size // 2
     for i in range(L):
-      start = max(i-half_w,0); end = min(i+half_w+1,L)
-      window = x[start:end]
-      med = np.median(window)
-      mad = k*np.median(np.abs(window-med))
-      if mad and abs(x[i]-med) > n_sigmas*mad:
+      s, e = max(i-half, 0), min(i+half+1, L)
+      win = x[s:e]; med = np.median(win)
+      mad = k * np.median(np.abs(win - med))
+      if mad and abs(x[i]-med) > n_sigmas * mad:
         x[i] = med
     return x
 
-  # Hampel‐filter したデータ
-  G_dataset = mag * np.exp(1j*phase)
-  G_real_filt = hampel_filter(G_dataset.real)
-  G_imag_filt = hampel_filter(G_dataset.imag)
-  G_filt = G_real_filt + 1j*G_imag_filt
+  G_tr_f = hampel_filter(G_tr.real) + 1j * hampel_filter(G_tr.imag)
+  G_te_f = hampel_filter(G_te.real) + 1j * hampel_filter(G_te.imag)
 
-  # プロット（省略せずそのまま）
-  plt.figure(figsize=(8,4))
-  plt.loglog(omega, y_real, 'b.', label='Measured Real')
-  plt.loglog(omega_test, y_real_pred, 'r-', label='Interpolated Real')
-  plt.fill_between(omega_test,
-           y_real_pred-2*y_real_std,
-           y_real_pred+2*y_real_std,
-           color='r', alpha=0.2, label='±2σ')
-  plt.xlabel('ω (rad/s)'); plt.ylabel('Re{G}')
-  plt.title('Real Part: Measured vs Linear Interp.')
-  plt.legend(); plt.grid(True,which='both',ls='--')
-  plt.tight_layout(); plt.savefig("_real_fit.png",dpi=300); plt.show()
+  # GP モデル ---------------------------------------------------------------
+  kernel = C(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e2)) + WhiteKernel()
+  gp_r = GaussianProcessRegressor(kernel=kernel, alpha=0.0, n_restarts_optimizer=5, normalize_y=True)
+  gp_i = GaussianProcessRegressor(kernel=kernel, alpha=0.0, n_restarts_optimizer=5, normalize_y=True)
 
-  plt.figure(figsize=(8,4))
-  plt.loglog(omega, y_imag, 'g.', label='Measured Imag')
-  plt.loglog(omega_test, y_imag_pred, 'm-', label='Interpolated Imag')
-  plt.fill_between(omega_test,
-           y_imag_pred-2*y_imag_std,
-           y_imag_pred+2*y_imag_std,
-           color='m', alpha=0.2, label='±2σ')
-  plt.xlabel('ω (rad/s)'); plt.ylabel('Im{G}')
-  plt.title('Imag Part: Measured vs Linear Interp.')
-  plt.legend(); plt.grid(True,which='both',ls='--')
-  plt.tight_layout(); plt.savefig("_imag_fit.png",dpi=300); plt.show()
+  gp_r.fit(X_tr, G_tr_f.real)
+  gp_i.fit(X_tr, G_tr_f.imag)
 
-  # MSE
-  mse = np.mean(np.abs(G_filt - H_pred_meas)**2)
-  print(f"Nyquist MSE (after Hampel filter): {mse:.4e}")
+  # 連続グリッド (for smooth curve) ----------------------------------------
+  w_grid = np.logspace(np.log10(min(w_tr.min(), w_te.min())),
+             np.log10(max(w_tr.max(), w_te.max())),
+             N_TEST_POINTS)
+  X_grid = np.log10(w_grid).reshape(-1, 1)
 
-  # Nyquist プロット
-  order = np.argsort(omega_test)
-  plt.figure(figsize=(10,6))
-  plt.plot(G_filt.real, G_filt.imag, 'b*', ms=6, label='Filtered Data')
-  H_best = y_real_pred + 1j*y_imag_pred
-  plt.plot(H_best.real[order], H_best.imag[order],
-       'r-', lw=2, label='Linear Interp.')
-  plt.xlabel('Re'); plt.ylabel('Im')
-  plt.title(f'Nyquist Plot (MSE: {mse:.4e})')
-  plt.grid(True); plt.legend()
-  plt.tight_layout(); plt.savefig("_nyquist.png",dpi=300); plt.show()
+  r_grid, _ = gp_r.predict(X_grid, return_std=True)
+  i_grid, _ = gp_i.predict(X_grid, return_std=True)
+  G_grid = r_grid + 1j * i_grid
 
-  # CSV 出力
-  output_data = np.column_stack((omega_test, y_real_pred, y_imag_pred))
-  csv_filepath = Path("linear_predicted_G_values.csv")
-  header = "omega,Re_G,Im_G"
-  np.savetxt(csv_filepath, output_data,
-         delimiter=",", header=header, comments='')
-  print(f"Predicted G values saved to {csv_filepath}")
+  # prediction on each set --------------------------------------------------
+  r_tr, _ = gp_r.predict(X_tr, return_std=True)
+  i_tr, _ = gp_i.predict(X_tr, return_std=True)
+  G_tr_pred = r_tr + 1j * i_tr
+
+  r_te, _ = gp_r.predict(X_te, return_std=True)
+  i_te, _ = gp_i.predict(X_te, return_std=True)
+  G_te_pred = r_te + 1j * i_te
+
+  # MSE ---------------------------------------------------------------------
+  mse_tr = np.mean(np.abs(G_tr_f - G_tr_pred) ** 2)
+  mse_te = np.mean(np.abs(G_te_f - G_te_pred) ** 2)
+  print(f"MSE  (train): {mse_tr:.4e}")
+  print(f"MSE  (test) : {mse_te:.4e}")
+
+  # Nyquist plot ------------------------------------------------------------
+  fig, ax = plt.subplots(1, 2, figsize=(12, 6), sharex=True, sharey=True)
+
+  # --- train ---
+  ax[0].plot(G_tr_f.real, G_tr_f.imag, 'b*', ms=6, label='Train (filtered)')
+  ax[0].plot(G_grid.real, G_grid.imag, 'r-', lw=2, label='GP prediction')
+  ax[0].set_title(f"Train Nyquist (MSE={mse_tr:.2e})")
+  ax[0].set_xlabel('Re'); ax[0].set_ylabel('Im')
+  ax[0].grid(True); ax[0].legend()
+
+  # --- test ---
+  ax[1].plot(G_te_f.real, G_te_f.imag, 'g*', ms=6, label='Test (filtered)')
+  ax[1].plot(G_grid.real, G_grid.imag, 'r-', lw=2, label='GP prediction')
+  ax[1].set_title(f"Test Nyquist (MSE={mse_te:.2e})")
+  ax[1].set_xlabel('Re')
+  ax[1].grid(True); ax[1].legend()
+
+  plt.tight_layout()
+  plt.savefig("_nyquist_train_test_gp.png", dpi=300)
+  plt.show()
 
 if __name__ == "__main__":
   main()
