@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -51,14 +50,13 @@ def main():
     data_dir = Path("./gp/data")
     test_names = {
         "SKE2024_data18-Apr-2025_1205.dat",
-        "SKE2024_data16-May-2025_1609.dat",
     }
 
     # -------------------- load --------------------
     train_omega, train_mag, train_phase = [], [], []
     test_omega,  test_mag,  test_phase  = [], [], []
 
-    for fp in data_dir.glob("./gp/data/SKE2024_data*.dat"):
+    for fp in data_dir.glob("SKE2024_data*.dat"):
         omega, mag, phase = load_bode_data(fp)
         if fp.name in test_names:
             test_omega.append(omega)
@@ -76,15 +74,13 @@ def main():
     omega_tr = np.concatenate(train_omega)
     mag_tr   = np.concatenate(train_mag)
     phase_tr = np.concatenate(train_phase)
-
-    idx_tr = np.argsort(omega_tr)
+    idx_tr   = np.argsort(omega_tr)
     omega_tr, mag_tr, phase_tr = omega_tr[idx_tr], mag_tr[idx_tr], phase_tr[idx_tr]
 
     omega_te = np.concatenate(test_omega)
     mag_te   = np.concatenate(test_mag)
     phase_te = np.concatenate(test_phase)
-
-    idx_te = np.argsort(omega_te)
+    idx_te   = np.argsort(omega_te)
     omega_te, mag_te, phase_te = omega_te[idx_te], mag_te[idx_te], phase_te[idx_te]
 
     # -------------------- prepare inputs --------------------
@@ -109,36 +105,47 @@ def main():
     # -------------------- predict --------------------
     y_tr_r_pred = gpr_r.predict(X_tr)
     y_tr_i_pred = gpr_i.predict(X_tr)
-
     y_te_r_pred = gpr_r.predict(X_te)
     y_te_i_pred = gpr_i.predict(X_te)
 
-    # -------------------- MSE with Hampel --------------------
-    G_tr_true  = y_tr_real + 1j * y_tr_imag
-    G_tr_pred  = y_tr_r_pred + 1j * y_tr_i_pred
-    err_tr     = np.abs(G_tr_true - G_tr_pred)
-    keep_tr    = _hampel_filter(err_tr)
-    mse_tr     = np.mean(err_tr[keep_tr] ** 2)
+    # -------------------- Hampel filter on |G|, then evaluate --------------------
+    G_tr_true = y_tr_real + 1j * y_tr_imag
+    G_tr_pred = y_tr_r_pred + 1j * y_tr_i_pred
+    keep_tr   = _hampel_filter(np.abs(G_tr_true))
+    mse_tr    = np.sqrt(np.mean(np.abs(G_tr_true[keep_tr] - G_tr_pred[keep_tr]) ** 2))
 
-    G_te_true  = y_te_real + 1j * y_te_imag
-    G_te_pred  = y_te_r_pred + 1j * y_te_i_pred
-    err_te     = np.abs(G_te_true - G_te_pred)
-    keep_te    = _hampel_filter(err_te)
-    mse_te     = np.mean(err_te[keep_te] ** 2)
+    G_te_true = y_te_real + 1j * y_te_imag
+    G_te_pred = y_te_r_pred + 1j * y_te_i_pred
+    keep_te   = _hampel_filter(np.abs(G_te_true))
+    mse_te    = np.sqrt(np.mean(np.abs(G_te_true[keep_te] - G_te_pred[keep_te]) ** 2))
 
     # -------------------- plot --------------------
-    plt.figure(figsize=(8, 6))
-    plt.plot(G_tr_true.real, G_tr_true.imag, "b.",  label="Train data")
-    plt.plot(G_tr_pred.real, G_tr_pred.imag, "r.",  label="GP pred (train)")
-    plt.plot(G_te_true.real, G_te_true.imag, "g^", label="Test data")
-    plt.plot(G_te_pred.real, G_te_pred.imag, "ys", label="GP pred (test)")
-    plt.xlabel("Re")
-    plt.ylabel("Im")
-    plt.title(f"Nyquist plot\nMSE_train={mse_tr:.3e}  MSE_test={mse_te:.3e}")
-    plt.grid(True)
-    plt.legend()
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 12))
+
+    # Train plot
+    ax1.plot(G_tr_true.real, G_tr_true.imag, "b.", label="Train data")
+    ax1.plot(G_tr_pred.real, G_tr_pred.imag, "r.", linewidth=3, label="GP pred (train)")
+    ax1.set_xlabel("Re", fontsize=14)
+    ax1.set_ylabel("Im", fontsize=14)
+    ax1.set_title(f"Nyquist plot - Train\nMSE_train={mse_tr:.3e}")
+    ax1.set_xlim([-0.7, 0.7])
+    ax1.set_ylim([-0.6, 0.2])
+    ax1.grid(True)
+    ax1.legend()
+
+    # Test plot
+    ax2.plot(G_te_true.real, G_te_true.imag, "g^", label="Test data")
+    ax2.plot(G_te_pred.real, G_te_pred.imag, "ys", linewidth=3, label="GP pred (test)")
+    ax2.set_xlabel("Re", fontsize=14)
+    ax2.set_ylabel("Im", fontsize=14)
+    ax2.set_title(f"Nyquist plot - Test\nMSE_test={mse_te:.3e}")
+    ax2.set_xlim([-0.7, 0.7])
+    ax2.set_ylim([-0.6, 0.2])
+    ax2.grid(True)
+    ax2.legend()
+
     plt.tight_layout()
-    out_png = Path("./gp/output/nyquist_train_test.png")
+    out_png = Path("./gp/output/sample_nyquist_train_test.png")
     out_png.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_png, dpi=300)
     plt.show()
@@ -146,6 +153,6 @@ def main():
     print(f"Train MSE : {mse_tr:.4e}")
     print(f"Test  MSE : {mse_te:.4e}")
     print(f"Figure saved to {out_png}")
+
 if __name__ == "__main__":
     main()
-
