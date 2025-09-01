@@ -1,3 +1,7 @@
 ./result/*
 *.mat
 /.conda
+CLAUDE.md
+test_output/
+.claude
+__pycache__
