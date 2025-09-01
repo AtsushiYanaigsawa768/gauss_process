@@ -111,27 +111,18 @@ def _predict_gpr(
     G_train: np.ndarray,
     X_eval: np.ndarray,
 ) -> np.ndarray:
-    """Sklearn GPR on real/imag parts independently.
-    Keeps dependencies light and works well for smooth FRF.
+    """Use pure GP implementation in gp/pure_gp.py to predict complex FRF.
+
+    Falls back to simple linear interpolation if pure GP import fails.
     """
-    from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel
-    from sklearn.preprocessing import StandardScaler
-
-    scaler = StandardScaler()
-    Xs_train = scaler.fit_transform(X_train.reshape(-1, 1))
-    Xs_eval = scaler.transform(X_eval.reshape(-1, 1))
-
-    kernel = ConstantKernel(1.0, (1e-3, 1e3)) * RBF(1.0, (1e-2, 1e3)) + WhiteKernel(1e-3, (1e-6, 1e1))
-    gpr_r = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True, random_state=0)
-    gpr_i = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, normalize_y=True, random_state=1)
-
-    gpr_r.fit(Xs_train, G_train.real)
-    gpr_i.fit(Xs_train, G_train.imag)
-
-    r_pred = gpr_r.predict(Xs_eval)
-    i_pred = gpr_i.predict(Xs_eval)
-    return r_pred + 1j * i_pred
+    try:
+        from gp.pure_gp import fit_predict_complex_gp
+        return fit_predict_complex_gp(X_train, G_train, X_eval, kernel="tc", noise=1e-2, optimize=True, maxiter=200)
+    except Exception as e:
+        # Fallback: linear interpolation
+        f_r = interp1d(X_train, G_train.real, kind="linear", fill_value="extrapolate")
+        f_i = interp1d(X_train, G_train.imag, kind="linear", fill_value="extrapolate")
+        return f_r(X_eval) + 1j * f_i(X_eval)
 
 
 # =======================
@@ -452,7 +443,7 @@ def run_complete_pipeline(
     - method: 'gpr' or 'linear'
     """
     if output_dir is None:
-        output_dir = Path("./gp/output")
+        output_dir = Path("./gp/output_tc")
     else:
         output_dir = Path(output_dir)
     data_dir = Path(input_data_path) if input_data_path is not None else Path("./gp/data")
@@ -470,4 +461,3 @@ def run_complete_pipeline(
 
     result = gp(cfg)
     return result
-
