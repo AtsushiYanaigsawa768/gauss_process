@@ -12,7 +12,7 @@ if __name__ == "__main__":
     print("-" * 60)
     
     # Create test output directory
-    test_dir = Path("./test_output_tc")
+    test_dir = Path("./test_output_test")
     test_dir.mkdir(exist_ok=True)
     
     # Run pipeline

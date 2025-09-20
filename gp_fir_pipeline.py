@@ -117,7 +117,7 @@ def _predict_gpr(
     """
     try:
         from gp.pure_gp import fit_predict_complex_gp
-        return fit_predict_complex_gp(X_train, G_train, X_eval, kernel="tc", noise=1e-2, optimize=True, maxiter=200)
+        return fit_predict_complex_gp(X_train, G_train, X_eval, kernel="exp", noise=1e-2, optimize=True, maxiter=200)
     except Exception as e:
         # Fallback: linear interpolation
         f_r = interp1d(X_train, G_train.real, kind="linear", fill_value="extrapolate")
@@ -192,8 +192,11 @@ class GPConfig:
     # FIR stage
     fir_io_mat: Optional[Path] = None  # e.g., Path('fir/data/data_hour.mat')
     energy_cut: float = 0.99
-    lms_mu: float = 1e-3
-    lms_partial_m: int = 10
+    # RLS parameters (FIR identification in time-domain)
+    rls_lambda: float = 0.995  # forgetting factor
+    rls_P0: float = 1e4        # initial covariance scale (P0 * I)
+    # Plot control
+    display_seconds: Optional[float] = None  # None: show full duration; else limit x-axis
 
 
 def gp(config: GPConfig) -> Dict[str, object]:
@@ -311,8 +314,9 @@ def gp(config: GPConfig) -> Dict[str, object]:
             Ts=Ts,
             io_mat=config.fir_io_mat,
             out_dir=out_dir,
-            lms_mu=config.lms_mu,
-            lms_partial_m=config.lms_partial_m,
+            rls_lambda=config.rls_lambda,
+            rls_P0=config.rls_P0,
+            display_seconds=config.display_seconds,
         )
         out.update({f"fir_{k}": v for k, v in fir_out.items()})
 
@@ -344,21 +348,29 @@ def _run_fir_eval(
     Ts: float,
     io_mat: Optional[Path],
     out_dir: Path,
-    lms_mu: float = 1e-3,
-    lms_partial_m: int = 10,
+    rls_lambda: float = 0.995,
+    rls_P0: float = 1e4,
+    display_seconds: Optional[float] = None,
 ) -> Dict[str, object]:
-    """Evaluate a FIR model from an initial impulse response.
+    """Evaluate a FIR model using RLS on time-domain I/O.
 
-    If io_mat is None or missing, synthesize a test I/O dataset to validate
-    the end-to-end flow.
+    - h_init: initial FIR coefficients (from FRF via IFFT)
+    - Ts: FIR sampling period derived from FRF grid
+    - io_mat: MAT file with rows [time; y; u] or cols [time, y, u]
+    - rls_lambda: forgetting factor (0 < lambda <= 1)
+    - rls_P0: initial covariance scale (P0 * I)
+    - display_seconds: if provided, limit plots to this time window
+
+    If io_mat is None or missing, synthesize a test I/O dataset using h_init.
     """
     out: Dict[str, object] = {}
 
+    # Load or synthesize I/O
     if io_mat is not None and io_mat.exists():
         t, u, y = _load_io_mat(io_mat)
-        # resample not implemented; assume sampling close enough for demo
+        # If sampling differs notably from Ts, we still proceed (no resampling here)
     else:
-        # Synthesize I/O using the provided h_init
+        print("[Warning] I/O MAT file not found, using synthetic data")
         N = 5000
         rng = np.random.default_rng(0)
         u = rng.standard_normal(N).astype(float)
@@ -366,46 +378,89 @@ def _run_fir_eval(
         y = (y_clean + 0.02 * np.std(y_clean) * rng.standard_normal(N)).astype(float)
         t = np.arange(N) * Ts
 
+    # Time-step diagnostics
+    if len(t) > 1:
+        dt_values = np.diff(t)
+        dt = float(np.mean(dt_values))
+        if np.max(np.abs(dt_values - dt)) > 0.01 * dt:
+            print("[Warning] Non-uniform time steps detected in input data.")
+    else:
+        dt = float(Ts)
+
     N = len(u)
     L = len(h_init)
-    phi = np.zeros(L)
-    h = h_init.copy()
-    yhat = np.zeros(N)
-    err = np.zeros(N)
 
+    # RLS state
+    h = h_init.copy().astype(float)
+    P = (rls_P0 * np.eye(L)).astype(float)
+    phi = np.zeros(L, dtype=float)
+
+    # Buffers
+    yhat = np.zeros(N, dtype=float)
+    err = np.zeros(N, dtype=float)
+
+    lam = float(rls_lambda)
+    lam = max(min(lam, 1.0), 1e-6)
+
+    # RLS loop
     for n in range(N):
-        # update regressor [u[n], ..., u[n-L+1]]
         phi = np.roll(phi, 1)
         phi[0] = u[n]
-        # prediction
-        yhat[n] = float(np.dot(phi, h))
-        err[n] = y[n] - yhat[n]
-        # partial-update LMS on top-M taps by gradient magnitude
-        delta = lms_mu * phi * err[n]
-        idx = np.argsort(np.abs(delta))[::-1][: min(lms_partial_m, L)]
-        h[idx] += delta[idx]
 
-    # Metrics after initial transient (ignore first L samples)
+        if n >= L - 1:
+            yhat[n] = float(phi @ h)
+            err[n] = y[n] - yhat[n]
+            denom = lam + float(phi @ (P @ phi))
+            K = (P @ phi) / max(denom, 1e-30)
+            h = h + K * err[n]
+            P = (P - np.outer(K, (phi @ P))) / lam
+        else:
+            yhat[n] = 0.0
+            err[n] = y[n]
+
+    # Metrics after initial transient
     e_tail = err[L:]
     y_tail = y[L:]
-    rmse = float(np.sqrt(np.mean(e_tail**2)))
-    nrmse = float(1.0 - np.linalg.norm(e_tail) / (np.linalg.norm(y_tail - np.mean(y_tail)) + 1e-12))
-    r2 = float(1.0 - np.sum(e_tail**2) / (np.sum((y_tail - np.mean(y_tail))**2) + 1e-12))
+    rmse = float(np.sqrt(np.mean(e_tail ** 2))) if e_tail.size else float("nan")
+    nrmse = float(1.0 - np.linalg.norm(e_tail) / (np.linalg.norm(y_tail - np.mean(y_tail)) + 1e-12)) if e_tail.size else float("nan")
+    r2 = float(1.0 - np.sum(e_tail ** 2) / (np.sum((y_tail - np.mean(y_tail)) ** 2) + 1e-12)) if e_tail.size else float("nan")
 
-    # Save plots
+    # Plotting (optionally limit to display_seconds)
+    t_plot = t
+    y_plot = y
+    yhat_plot = yhat
+    e_plot = err
+    if display_seconds is not None and len(t) > 0:
+        try:
+            T_end = float(t[-1])
+            T_start = max(float(t[0]), T_end - float(display_seconds))
+            mask = (t >= T_start) & (t <= T_end)
+            if np.any(mask):
+                t_plot = t[mask]
+                y_plot = y[mask]
+                yhat_plot = yhat[mask]
+                e_plot = err[mask]
+        except Exception:
+            # if time is not monotonic or similar, fall back to full plot
+            pass
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7))
-    ax1.plot(t, y, "k", label="Measured y")
-    ax1.plot(t, yhat, "r--", label="Predicted yhat")
-    ax1.set_title("Output vs Prediction")
+    ax1.plot(t_plot, y_plot, "k", label="Measured y")
+    ax1.plot(t_plot, yhat_plot, "r--", label="Predicted yhat")
+    ax1.set_title("Output vs Prediction (RLS)")
     ax1.set_xlabel("time [s]")
     ax1.set_ylabel("y")
     ax1.legend(); ax1.grid(True)
+    if display_seconds is not None and len(t_plot) > 0:
+        ax1.set_xlim(t_plot[0], t_plot[0] + min(display_seconds, t_plot[-1] - t_plot[0] if len(t_plot) > 1 else 0))
 
-    ax2.plot(t, err, "b", label="error")
+    ax2.plot(t_plot, e_plot, "b", label="error")
     ax2.set_title(f"Error (RMSE={rmse:.3e}, NRMSE={nrmse*100:.2f}%, R2={r2:.3f})")
     ax2.set_xlabel("time [s]")
     ax2.set_ylabel("e")
     ax2.legend(); ax2.grid(True)
+    if display_seconds is not None and len(t_plot) > 0:
+        ax2.set_xlim(ax1.get_xlim())
 
     fig.tight_layout()
     fir_fig = out_dir / "fir_results.png"
@@ -416,7 +471,15 @@ def _run_fir_eval(
     coef_path = out_dir / "fir_coefficients.npz"
     np.savez(coef_path, h=h, h_init=h_init, Ts=Ts)
 
-    summary = {"rmse": rmse, "nrmse": nrmse, "r2": r2, "L": int(L), "Ts": float(Ts)}
+    summary = {
+        "rmse": rmse,
+        "nrmse": nrmse,
+        "r2": r2,
+        "L": int(L),
+        "Ts": float(Ts),
+        "rls_lambda": float(lam),
+        "display_seconds": None if display_seconds is None else float(display_seconds),
+    }
     with open(out_dir / "fir_metrics.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 

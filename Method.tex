@@ -1,0 +1,572 @@
+\section{実験方法}
+\label{sec:section}
+
+\subsection{実機を用いた周波数応答の測定}
+\label{sec:apparatus}
+
+Quanser 社製フレキシブルリンクに対し，フィードバック制御を有効化した Simulink モデルを用い，リアルタイム計測により周波数応答を取得する手順を示す。以下，データ処理の流れに従って説明する。フレキシブルリンクを入出力をもつシステムとみなし，制御対象とする。このモデルは次のとおりである。
+
+\paragraph{1. 周波数成分の設計と多重正弦波生成}
+サンプリング点数を
+\(
+  N_d = 100
+\)
+とし，対象帯域を対数軸上で \([-1.0,\,2.3]\) の範囲に等間隔で 100 分割する。すなわち，
+{\small
+\begin{align}
+  x_i &= -1.0 + \frac{i-1}{N_d - 1}\bigl(2.3 + 1.0\bigr), \quad i = 1,\dots,100, \notag\\
+  f_i &= 10^{x_i}\;[\mathrm{Hz}], 
+  \quad
+  \omega_i = 2\pi f_i\;[\mathrm{rad/s}] \notag
+\end{align}
+}
+を定義し，角周波数列 \(\{\omega_i\}\) を得る。各周波数成分の入力振幅は上限
+{\small
+\[
+  g_{\max} = \frac{20}{N_d} = 0.2
+\]
+}
+とし，一様分布
+\(
+  g_i \sim \mathcal{U}(0,\,0.2)
+\)
+から決定する。位相も
+\(
+  \phi_i \sim \mathcal{U}(0,\,2\pi)
+\)
+とし，次式で多重正弦波
+{\small
+\begin{equation}
+        \label{eq:multi_sine}
+  u(t) = \sum_{i=1}^{N_d=100} g_i \sin(\omega_i t + \phi_i)
+\end{equation}
+}
+を生成する。ここで，\(u(t)\) は入力を表す。
+
+\paragraph{2. Simulink モデル内設定とフィードバック制御}
+生成した \(u(t)\) を Simulink の Inport に与え，PID Controller ブロックを通じてフレキシブルリンクへ入力する。これは摩擦による非線形性を抑え，入力電圧と出力角度の線形近似範囲で安定動作させるためである。フィードバック制御の関係は Fig.~\ref{fig:feedback_control} のとおりで，制御対象はフレキシブルリンクである。
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=1\textwidth]{Control.png}
+  \caption{フィードバック制御系の概略図}
+  \label{fig:feedback_control}
+\end{figure}
+PID パラメータは以下とした。
+{\small
+\begin{align*}
+  \mathrm{P} &= 1.65, \\
+  \mathrm{I} &= 0.00, \\
+  \mathrm{D} &= 0.00
+\end{align*}
+}
+
+\paragraph{3. 実験条件（計測時間と繰り返し回数）}
+サンプリング周期を
+\(
+  \Delta t = 0.002\;\mathrm{s}
+\)
+とし，計測全体時間を
+{\small
+\[
+  \mathrm{Sim\_time} = 60 \times 60 = 3\,600\;\mathrm{s} \quad (1\mathrm{時間})
+\]
+}
+とした。\\
+Todo 回数、時間は、あとで決める。
+
+\paragraph{4. リアルタイムでのフーリエ係数抽出}
+Simulink 内で取得した離散時間入出力信号 $u[n], y[n]$ $(n=0,\dots,N-1)$ に対し，
+各角周波数 $\omega_i$ $(i=1,\dots,N_d)$ における
+複素フーリエ係数を算出する。具体的には，
+{\small
+\begin{align}
+  \hat{U}_i &= \frac{2}{N}\sum_{n=0}^{N-1} u[n]\,e^{-j\omega_i n\Delta t}, \notag\\
+  \hat{Y}_i &= \frac{2}{N}\sum_{n=0}^{N-1} y[n]\,e^{-j\omega_i n\Delta t} \notag
+\end{align}
+}
+を計算し，周波数応答関数（FRF）の推定量を
+{\small
+\begin{equation}
+  \widehat{G}(j\omega_i) = \frac{\hat{Y}_i}{\hat{U}_i} \notag
+\end{equation}
+}
+として得る（ただし $\hat{U}_i \neq 0$）。振幅および位相は
+{\small
+\begin{align}
+  |\widehat{G}(j\omega_i)| 
+    &= \left|\frac{\hat{Y}_i}{\hat{U}_i}\right|
+    = \frac{|\hat{Y}_i|}{|\hat{U}_i|}, \notag\\
+  \varphi(j\omega_i) 
+    &= \arg\widehat{G}(j\omega_i) 
+    = \arg\hat{Y}_i - \arg\hat{U}_i \notag
+\end{align}
+}
+で算出する。
+
+\paragraph{5. データの結合と解析用行列作成}
+出力されたフーリエ係数データを MATLAB ワークスペースへ取り込み，周波数 \(\omega_i\) ごとに昇順に並べ替える。並べ替え後，解析用行列
+{\small
+\[
+  P =
+  \begin{bmatrix}
+    \omega \\
+    |G_k(j\omega)| \\
+    \varphi
+  \end{bmatrix}
+\]
+}
+を作成する。ここで \(\omega\) は周波数列，\(|G_k(j\omega)|\) は振幅，\(\varphi\) は位相であり，\(P\) には全周波数・全セットのデータ点集合が含まれる。
+
+以上により，フィードバック制御下で多重正弦波入力応答を繰り返し計測し，周波数応答データを取得した。これらを用いて後段で同定アルゴリズムに入力し，伝達関数モデルを推定する。
+
+\subsection{ガウス過程回帰を用いた周波数領域でのシステム同定}
+\label{sec:gp_setting}
+回帰問題では，入力 $\boldsymbol{x}\in\mathbb{R}^{d}$ とそれに対応する
+実スカラー出力 $y$ の組
+{\small
+\begin{equation}
+        \label{eq:gp_regression}
+        \mathcal{D}=\{(\boldsymbol{x}_{i},y_{i})\}_{i=1}^{n}
+\end{equation}
+}
+が与えられる。観測モデルは
+{\small
+\begin{equation}
+        y=f(\boldsymbol{x})+\varepsilon,
+        \qquad
+        \varepsilon\sim\mathcal{N}\!\bigl(0,\sigma_{n}^{2}\bigr),
+        \label{eq:gpr_obs}
+\end{equation}
+}
+で表され，$\varepsilon$ は平均 $0$・分散 $\sigma_{n}^{2}$ の
+独立なガウス雑音と仮定する。
+今回の実験では、具体的には、
+入力$\boldsymbol{x}\in\mathbb{R}^{d}$は、角周波数\(\omega\)の対数をとった値を指し、
+出力$y$は、複素数のペア\((|G_k(j\omega)|\cos\varphi, |G_k(j\omega)|\sin\varphi)\)を指す。
+{\small
+\begin{equation}
+\label{eq:gp_setting}
+\begin{cases}
+  \displaystyle \mathbf{x} = \log_{10}\omega\,,\\[0.5em]
+  \displaystyle y = \bigl(|G_k(j\omega)|\cos\varphi,\;|G_k(j\omega)|\sin\varphi\bigr)
+\end{cases}
+\end{equation}
+}
+% 以降のガウス過程回帰問題の説明の際には、特に断りがない限り、一般的な入力\(x\)や出力\(y\)について述べる。
+% %--------------------------------------------------------------------
+% \subsubsection{事前分布}\label{subsec:prior}
+
+% 未知の潜在関数 $f$ にはガウス過程（GP）の事前分布
+% {\small
+% \begin{equation}
+%         f(\boldsymbol{x})\sim\mathcal{GP}\!\bigl(m(\boldsymbol{x}),k(\boldsymbol{x},\boldsymbol{x}')\bigr)
+%         \label{eq:gp_prior}
+% \end{equation}
+% }
+% を仮定する。ここで $m(\boldsymbol{x})$ は平均関数
+% （以下 $0$ とする），
+% $k(\boldsymbol{x},\boldsymbol{x}')$ はカーネル関数である。
+
+% 入力行列
+% $X=[\boldsymbol{x}_{1},\dots,\boldsymbol{x}_{n}]^{\top}$ に対して，
+% 関数値ベクトル
+% $\boldsymbol{f}=[f(\boldsymbol{x}_{1}),\dots,f(\boldsymbol{x}_{n})]^{\top}$
+% は多変量正規分布
+% {\small
+% \begin{equation}
+%         p(\boldsymbol{f}\mid X)=\mathcal{N}\!\bigl(\boldsymbol{m},K\bigr),
+%         \label{eq:gpr_f_prior}
+% \end{equation}
+% }
+% に従う。ただし
+% $\boldsymbol{m}=[m(\boldsymbol{x}_{1}),\dots,m(\boldsymbol{x}_{n})]^{\top}$，
+% $K_{ij}=k(\boldsymbol{x}_{i},\boldsymbol{x}_{j})$ である。
+
+% %--------------------------------------------------------------------
+% \subsubsection{周辺尤度とハイパーパラメータ学習}\label{subsec:marginal}
+
+% 観測ノイズを含めると，出力ベクトル
+% $\boldsymbol{y}=[y_{1},\dots,y_{n}]^{\top}$ の周辺尤度は
+% {\small
+% \begin{equation}
+%         p(\boldsymbol{y}\mid X,\theta)
+%         =\mathcal{N}\!\bigl(\boldsymbol{m},K+\sigma_{n}^{2}I\bigr),
+%         \label{eq:gpr_marginal}
+% \end{equation}
+% }
+% となる。ここで $\theta$ はカーネルのハイパーパラメータの集合であり，
+% 対数周辺尤度 $\log p(\boldsymbol{y}\mid X,\theta)$ を最大化
+% （あるいはベイズ最適化を適用）して推定する。
+
+% %--------------------------------------------------------------------
+% \subsubsection{予測分布}\label{subsec:predictive}
+
+% 未知の入力 $\boldsymbol{x}_{*}$ に対する事後予測分布は，再びガウス分布
+% {\small
+% \begin{equation}
+%         p\!\bigl(f_{*}\mid X,\mathcal{D},\theta\bigr)
+%         =\mathcal{N}\!\bigl(\mu_{*},\sigma_{*}^{2}\bigr),
+%         \label{eq:gpr_predictive}
+% \end{equation}
+% }
+% で与えられる。その平均と分散は
+% {\small
+% \begin{align}
+%         \mu_{*}&=
+%         m_{*}+
+%         \boldsymbol{k}_{*}^{\top}
+%         \bigl(K+\sigma_{n}^{2}I\bigr)^{-1}
+%         (\boldsymbol{y}-\boldsymbol{m}),
+%         \label{eq:gpr_mean}\\[4pt]
+%         \sigma_{*}^{2}&=
+%         k(\boldsymbol{x}_{*},\boldsymbol{x}_{*})-
+%         \boldsymbol{k}_{*}^{\top}
+%         \bigl(K+\sigma_{n}^{2}I\bigr)^{-1}
+%         \boldsymbol{k}_{*},
+%         \label{eq:gpr_var}
+% \end{align}
+% }
+% となる。ここで
+% {\small
+% \begin{align*}
+%         \boldsymbol{x}_{*}&\in\mathbb{R}^{d},\\
+%         m_{*}&=m(\boldsymbol{x}_{*}),\\
+%         \boldsymbol{k}_{*}&=[k(\boldsymbol{x}_{1},\boldsymbol{x}_{*}),\dots,k(\boldsymbol{x}_{n},\boldsymbol{x}_{*})]^{\top}.
+% \end{align*}
+% }
+% である。
+% 本研究では、この平均 $\mu_{*}$ を周波数応答の推定値とした。
+
+\subsection{伝達関数の同定のための問題設定}
+\label{sec:transfer_function_identification}
+前節\ref{sec:gp_setting}で定義したガウス過程回帰を用いて、フレキシブルリンクの伝達関数を同定するための問題設定を行う。
+ガウス過程回帰(式(\ref{eq:gp_regression}))の入力と出力は、すでに、式(\ref{eq:gp_setting})で定義した通りである。
+$|G_k(j\omega)| \cos(\varphi) $と$|G_k(j\omega)| \sin(\varphi)$それぞれに対して、ガウス過程回帰を適応し、伝達関数の同定を行う。
+その後、それぞれの手法の評価のために、観測された角周波数のうち、
+最小なものと最大のものから50000点を等間隔に抽出し、周波数応答$G$を推定する。
+
+以下の節では、それぞれの手法の詳細を述べる。
+\subsubsection{標準的なガウス過程回帰（GP）}
+\label{sec:standard_gp}
+標準的なガウス過程回帰では、観測ノイズをガウス分布と仮定する。
+以下の5種類のカーネルを用いて、伝達関数の同定を行う。
+
+\paragraph{RBFカーネル}
+(定義[\ref{def:rbf_kernel}]で定義したRBFカーネルを使用する。)
+RBF カーネルは、以下の形を持つ。
+\begin{equation}
+k(x,x') = \sigma^2 \exp\left(-\frac{(x-x')^2}{2\ell^2}\right)
+\end{equation}
+ここで $\sigma^2 > 0$ は分散パラメータ、$\ell > 0$ は長さスケールパラメータである。
+このカーネルから生成される関数は無限回微分可能であり、非常に滑らかな関数を仮定する。
+ここで、$\sigma = 1$、$\ell = 1$ とした。\\
+Todo カーネルのパラメーターに関して調べる。
+
+\paragraph{Exponentialカーネル}
+Exponential カーネルは以下の形を持つ。(一次安定スプラインカーネルとも呼ばれる。)
+\begin{equation}
+k(x, x') = H(x) H(x') e^{-\omega(x + x')}, \quad \omega > 0
+\end{equation}
+ここで、$H(x)$はヘヴィサイドの階段関数(定義[\ref{def:heaviside}])である。
+ここで、$\omega$は、$\omega > 0$ である限り、安定性の性質を持つことが知られている。
+\cite[式(4.2)]{dinuzzo2013kernelslineartimeinvariant}
+ここでは、$\omega = 1$ とした。
+
+\paragraph{Turned Correlated (TC) カーネル}
+Exponential カーネルの類似カーネルとして、Turned Correlated (TC) カーネルがある。
+Turned Correlated (TC) カーネルは以下の形を持つ。
+\begin{equation}
+k(x,x') = H(x) H(x') e^{-\omega \max\{x, x'\}}, \quad \omega > 0
+\end{equation}
+\cite[式(4.3)]{dinuzzo2013kernelslineartimeinvariant}
+\paragraph{DC カーネル}
+\begin{equation}
+  k_{\mathrm{DC}}\!\left(i,j \mid [\alpha,\beta,\rho]^{\mathsf T}\right)
+  = \beta\, \alpha^{\frac{i+j}{2}}\, \rho^{\,|i-j|}.
+\end{equation}
+ハイパーパラメータは \(0<\alpha<1,\ \beta>0,\ |\rho|<1\) とみなす必要がある。
+\cite[式(16)]{337342}
+\paragraph{DI カーネル}
+\begin{equation}
+  k_{\mathrm{DI}}\!\left(i,j \mid [\beta,\alpha]^{\mathsf T}\right)
+  =
+  \begin{cases}
+    \beta\,\alpha^{\,i}, & i=j,\\
+    0, & \text{otherwise}.
+  \end{cases}
+\end{equation}
+ハイパーパラメータは \(0<\alpha<1,\ \beta>0,\ |\rho|<1\) とみなす必要がある。
+\cite[式(17)]{337342}
+\paragraph{一次安定スプラインカーネル}
+\begin{equation}
+  K_1(s,t;\beta) = \max(e^{-\beta s}, e^{-\beta t}) = e^{-\beta \min(s,t)}
+\end{equation}
+~\cite[式(10)]{6160606}
+\paragraph{二次安定スプラインカーネル}
+
+\begin{equation}
+  K_2(s,t;\beta) = \frac{1}{2}e^{-\beta(s+t+\max\{s,t\})} - \frac{1}{6}e^{-3\beta\max\{s,t\}}
+\end{equation}
+~\cite[式(11)]{6160606}
+\paragraph{高周波安定スプラインカーネル}
+\begin{equation}
+  K_{\mathrm{HF}}(s,t;\beta) = (-1)^{s+t}\max(e^{-\beta s}, e^{-\beta t})
+\end{equation}
+~\cite[式(14)]{6160606}
+\paragraph{Matérnカーネル}
+\[
+k_{\nu}(x,x')=\sigma_f^2\frac{2^{1-\nu}}{\Gamma(\nu)}
+\Bigl(\frac{\sqrt{2\nu}\,r}{\ell}\Bigr)^{\nu}
+K_{\nu}\!\Bigl(\frac{\sqrt{2\nu}\,r}{\ell}\Bigr),
+\]
+$\ell$: 長さスケール，$\nu$: 滑らかさ，$K_{\nu}$: 変形ベッセル関数。半整数 $\nu$ を選ぶと閉形式：
+\[
+\begin{aligned}
+k_{1/2}(r)&=\exp\!\Bigl(-\tfrac{r}{\ell}\Bigr),\\
+k_{3/2}(r)&=\Bigl(1+\tfrac{\sqrt{3}r}{\ell}\Bigr)\exp\!\Bigl(-\tfrac{\sqrt{3}r}{\ell}\Bigr),\\
+k_{5/2}(r)&=\Bigl(1+\tfrac{\sqrt{5}r}{\ell}+\tfrac{5r^{2}}{3\ell^{2}}\Bigr)\exp\!\Bigl(-\tfrac{\sqrt{5}r}{\ell}\Bigr).
+\end{aligned}
+\]
+ここで $r = \|x - x'\|$ である。
+$\nu$ が大きいほど滑らか，$\nu\to\infty$ で RBF に漸近する。
+\cite[式(4.14), 式(4.16), 式(4.17)]{Rasmussen2004}
+ここで、$\ell = 1$ とした。
+
+\paragraph{Stable Spline カーネル}
+安定スプライン（Stable Spline）カーネルは、LTIシステムの物理的制約（安定性・減衰特性）を直接組み込んだシステム同定専用のカーネルである\cite{PILLONETTO201081}。
+一次積分Wiener過程に対応する基底カーネル
+\begin{equation}
+W(x,\tau) = \begin{cases}
+\frac{x^2}{2}\left(\tau-\frac{x}{3}\right), & x \leq \tau \\
+\frac{\tau^2}{2}\left(x-\frac{\tau}{3}\right), & x > \tau
+\end{cases}
+\end{equation}
+に指数時間変換 $\tau = e^{-\beta x'}$ を適用し、
+\begin{equation}
+k(x,x') = \sigma_f^2 \cdot \frac{1}{2}r^2\left(R - \frac{r}{3}\right)
+\end{equation}
+と定義する。ここで $r = \min\{e^{-\beta x}, e^{-\beta x'}\}$、$R = \max\{e^{-\beta x}, e^{-\beta x'}\}$、
+$\beta > 0$ は減衰率パラメータ、$\sigma_f^2$ は分散パラメータである。
+このカーネルは非定常性を持ち、$x \to \infty$ で分散が指数的に減衰することでBIBO安定性を自然に満たす。
+本研究では $\beta = 0.5$、$\sigma_f = 1$ とした。
+
+ToDo パラメータの定義の方法をどうすればいいか？
+
+
+\subsubsection{T-GP}
+\label{sec:t_gp}
+T-GP（Student-t ガウス過程回帰）では、観測ノイズを Student の t 分布と仮定することで、外れ値に対するロバスト性を高める。\cite{jylanki2011}
+これは、通常の正規分布よりも裾が重い分布を使用することで、外れ値の影響を抑えることができると考えられるためである。
+具体的な実装には、python の gpflow ライブラリを使用する。
+
+\subsubsection{ITGP}
+\label{sec:itgp}
+ITGP（Iterative Trimming Gaussian Process）は、外れ値を反復的に除去することで、ガウス過程回帰の精度を向上させる手法である。\cite{Li2021}
+以下の 3 段階から構成される。
+
+\begin{enumerate}
+  \item \textbf{縮小段階・集中段階 (Shrinking \& Concentrating)}\\
+\begin{enumerate}
+  \item 全サンプル $\{x_i,\,y_i\}_{i=1}^n$ を用いて標準的なガウス過程（GP）を学習し、
+  各点について平均$\hat{f}_i$および分散$\sigma_i^2$を予測する。
+  次に，各点に対応する正規化残差
+  {\small
+    \begin{equation}
+        \label{eq:residual}
+        r_i' \;=\; \frac{\bigl|\,y_i - \hat{f}_i\bigr|}{\sigma_i}
+    \end{equation}
+  }
+
+    を計算する。
+
+  \item 式(\ref{eq:residual})における残差 $r_i'$ が小さい $\alpha n$ 個の点を選び，
+  それらだけを使ってガウス過程を再学習する。ここで、$\alpha$ は保持率である。
+  その後，全点に対する予測 $\{\hat{f}_i,\,\sigma_i^2\}_{i=1}^n$ を更新する。
+
+
+  \item (a),(b) のステップ2を合計で $n_{\mathrm{sh}} + n_{\mathrm{cc}}$ 回繰り返す
+  最初の $n_{\mathrm{sh}}$ 回（縮小段階）では，
+  保存率 $\alpha$ を徐々に $1$ から $\alpha_1$ まで縮小し，
+  次の $n_{\mathrm{cc}}$ 回（集中段階）では $\alpha$ を一定に保つ。
+\end{enumerate}
+  \item \textbf{再重み付け段階(Reweighting)}\\
+統計的効率を高めるために，一段階の再重み付け（一歩再重み付け）を行う。
+再度、通常のガウス過程回帰を適応させ、
+今回は以下の式(\ref{eq:itgp_residual})で定義される絶対残差を用いてデータ点を除去する。
+{\small
+\begin{equation}
+        r'_i = |y_i - \hat{f}_i|.
+        \label{eq:itgp_residual}
+\end{equation}
+}
+このうち、$1 - \alpha_2$ の割合を除去する。
+最後に、残ったデータ点に対して再度ガウス過程回帰を適応させる。
+このガウス過程回帰によって得られた予測値のみを最終的な出力とする。
+\end{enumerate}
+具体的な実装には、robustgp ライブラリを使用する。
+また、各種ハイパーパラメータの設定は、文献\cite{Li2021}で推奨されているものを使用した。
+具体的には、$\alpha_1 = 0.5$、$\alpha_2 = 0.975$、$n_{\rm sh} = 2$、$n_{\rm cc} = 2$ とした。
+
+\subsection{既存手法との比較}
+\label{sec:comparison_existing_methods}
+本研究で提案する手法の有効性を評価するために、既存の古典的なシステム同定手法と比較を行う。
+具体的には、以下の手法を比較対象として選定した。
+\subsubsection{古典的手法}
+\label{sec:classical_methods}
+古典的なシステム同定手法として、以下を実装した。具体的な手法は、\ref{sec:freq_id}で述べたPintelon ら~\cite{pintelon1994parametric}の内容に基づいている。
+\begin{itemize}
+  \item 非線形最小二乗法（NLS）
+  \item 線形最小二乗法（LS）
+  \item 反復重み付き線形最小二乗法（IWLS）
+  \item 全線形最小二乗法（TLS）
+  \item 最尤推定法（ML）
+  \item 対数最小二乗法（LOG）
+  \item LRMP
+  \item LPM
+\end{itemize}
+
+\subsection{機械学習的手法}
+\label{sec:ml_methods}
+本研究で提案する手法の有効性を評価するために、古典的な機械学習的手法と比較を行う。
+具体的には、以下の手法を比較対象として選定した。
+\begin{itemize}
+  \item ランダムフォレスト回帰（Random Forest Regression, RFR）
+  \item 勾配ブースティング回帰（Gradient Boosting Regression, GBR）
+  \item サポートベクターマシン回帰（Support Vector Machine Regression, SVM）
+\end{itemize}
+
+\subsection{FIRモデルによるフレキシブルリンクのシステム同定}
+\label{sec:fir_model}
+一般に回帰問題の性能評価はクロスバリデーションが用いられるが、
+本研究では伝達関数の推定精度を、データの存在しない周波数領域で検証するためにFIRモデルを採用した。
+これは、入出力応答(本研究では、\(y(t)\)に相当)が
+原理的に伝達関数の逆ラプラス変換した関数（インパルス応答）と入力との畳み込みで表現されるためである。
+特に安定な伝達関数は虚軸上でラプラス変換することができ、
+これは逆フーリエ変換に相当するため、
+観測データに存在しない周波数成分を適切に補間できているかどうかを確認することができる。
+
+ただし、無限長のインパルス応答列は使用できないため、
+安定なシステムではインパルス応答が指数関数的に減少することを利用し、
+有限長で打ち切って用いる。
+以上の議論をまとめたモデルを有限インパルス応答（Finite Impulse Response, FIR）といい、
+これを使ったモデリングをFIRモデルという。
+今回は、PID制御を用いているため、安定なシステムであると考えられ、FIRモデルを使用することが出来ると考える。
+
+FIRモデルは、具体的には以下のように定義される。
+{\small
+\begin{equation}
+  y(t) = \sum_{k=0}^{N-1} h_k u(t-k),
+  \label{eq:fir_model}
+\end{equation}
+}
+ここで、\(y(t)\) は出力、\(u(t)\) は入力、\(h_k\) は FIR モデルの係数（インパルス応答）であり、\(N\) はモデルの次数を表す。
+FIRモデルの同定は、ガウス過程回帰で得られた伝達関数を高速逆フーリエ変換して得られる係数を\(h_k\)として用いる。
+具体的な算出方法は、後述する。
+
+\subsubsection{FIRモデル係数の算出}
+式\,\eqref{eq:fir_model} で定義した有限インパルス応答
+\( \{h_k\}_{k=0}^{N-1}\subset\mathbb{R}\)
+を得るために，以下の３段階の処理を行った。
+
+\paragraph{Step 1：周波数データの線形補間}
+実験で取得した離散周波数応答
+\(
+  \{G(j\omega_i)\}_{i=1}^{N_d}\subset\mathbb{C}
+\)
+は \(\log\omega\) 空間で等間隔なので，
+線形スケール上では不均一である。 
+まず最小・最大角周波数
+\(
+  \omega_{\min}\!:=\!\min_i\omega_i,\;
+  \omega_{\max}\!:=\!\max_i\omega_i
+\)
+を定め，
+{\small
+\begin{equation}
+  \label{eq:omega_grid}
+  \omega_m=\omega_{\min}+m\,\Delta\omega,
+  \qquad
+\end{equation}
+}
+\(
+  m=0,\dots,N_d-1
+\)
+となる等間隔グリッドを構築する。  
+ここで
+\(
+  \Delta\omega=(\omega_{\max}-\omega_{\min})/(N_d-1)
+\)
+とした。
+区間 \([\omega_i,\omega_{i+1}]\) 内の任意の
+\(\omega\) に対しては
+{\small
+\begin{equation}
+  \label{eq:linear_interpolation}
+  G_{\mathrm{uni}}(\omega)
+  =\frac{\omega_{i+1}-\omega}{\omega_{i+1}-\omega_i}\,
+    G(j\omega_i)
+  +\frac{\omega-\omega_i}{\omega_{i+1}-\omega_i}\,
+    G(j\omega_{i+1})
+  \in\mathbb{C}
+\end{equation}
+}
+で表されるような線形補間を行い、
+式(\ref{eq:omega_grid})の各 \(\omega_m\) に評価して
+\(
+  G_{\mathrm{uni}}(\omega_m)
+  \;(m=0,\dots,N_d-1)
+\)
+を得る。
+
+\paragraph{Step 2：実数インパルス応答を得るための対称スペクトル構築}
+実数時系列を得るにはスペクトルのエルミート対称性
+\(
+  \overline{G(j\omega)}=G(-j\omega)
+\)
+を満たす必要がある。そこで
+{\small
+\begin{equation}
+  \label{eq:symmetric_spectrum}
+  \tilde{G}_{m}
+  :=G_{\mathrm{uni}}(\omega_m),
+  \qquad
+  \tilde{G}_{-m}
+  :=\overline{G_{\mathrm{uni}}(\omega_m)}, \\
+\end{equation}
+}
+(\(m=1,\dots,N_d-1\))と定義し，
+\(
+  \tilde{G}_{0}=G_{\mathrm{uni}}(\omega_0),\;
+  \tilde{G}_{N_d-1}=G_{\mathrm{uni}}(\omega_{N_d-1})
+\)
+を併せて
+{\small
+\begin{equation}
+  \label{eq:symmetric_spectrum_full}
+  \{\tilde{G}_{n}\}_{n=-(N_d-1)}^{N_d-1}
+  \subset\mathbb{C}
+\end{equation}
+}
+を構成する。
+
+\paragraph{Step 3：高速逆フーリエ変換による係数算出}
+式(\ref{eq:symmetric_spectrum_full})で得た長さ \(2N_d-1\) の対称スペクトル列を
+離散逆フーリエ変換し，
+実部を抽出してインパルス応答を得る：
+{\small
+\begin{equation}
+  \label{eq:fir_coefficients}
+  h_k
+  =\Re\!\Bigl\{
+        \frac{1}{2N_d-1}
+        \sum_{n=-(N_d-1)}^{N_d-1}
+        \tilde{G}_{n}\,
+        \exp\!\bigl(j\,\tfrac{2\pi k n}{2N_d-1}\bigr)
+      \Bigr\}
+\end{equation}
+}
+ここで \(N\) は希望する FIR モデル次数であり，
+上式(\ref{eq:fir_coefficients})で得た \(\{h_k\}\) を
+システム同定後のモデル係数として用いる。
+
+ToDO:Ho-Kalmanの実現定理について述べ、実際に形にしてみる。
