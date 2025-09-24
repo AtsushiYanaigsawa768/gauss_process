@@ -12,3 +12,5 @@ test_output_si
 test_output_test
 output
 test_output_ss
+input
+*.pyc
