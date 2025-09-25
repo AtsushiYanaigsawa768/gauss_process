@@ -32,6 +32,8 @@ python frequency_response_matched.py logs_io/*.mat \
   --nd 100 --f-low -1.0 --f-up 2.3 --dropseconds 30 \
   --out-prefix runA --out-dir output --n-files 10
 
+python src\frequency_response.py input/*.mat --n-files 1
+
 This writes into the 'output' directory:
   runA_bode_mag.png, runA_bode_phase.png, runA_nyquist.png,
   runA_frf.csv, runA_frf.mat, and (with --save-matlab) runA_frf.dat
