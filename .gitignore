@@ -15,3 +15,11 @@ test_output_ss
 input
 *.pyc
 output_complete
+test_no_delay_output
+test_fix_output
+test_plot_output
+test_ls_fir
+test_rf_fir
+test_fir_quick
+test_ls_quick
+test_ls_output

@@ -15,7 +15,7 @@ Features:
 import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
-
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -145,6 +145,342 @@ class ResonanceKernel(Kernel):
     @property
     def n_params(self) -> int:
         return 3
+
+
+# =====================
+# Additional Kernels from method.tex
+# =====================
+
+class ExponentialKernel(Kernel):
+    """Exponential kernel (first-order stable spline kernel) with Heaviside function."""
+
+    def __init__(self, omega: float = 1.0):
+        super().__init__(omega=omega)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        x1 = X1.ravel()
+        x2 = X2.ravel()
+
+        # Heaviside function H(x) = 1 if x >= 0, else 0
+        H1 = (x1 >= 0).astype(float)
+        H2 = (x2 >= 0).astype(float)
+
+        # Exponential kernel: H(x)H(x')exp(-ω(x+x'))
+        omega = self.params['omega']
+        K = np.outer(H1, H2) * np.exp(-omega * (x1[:, None] + x2[None, :]))
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [(1e-3, 10.0)]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['omega']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['omega'] = params[0]
+
+    @property
+    def n_params(self) -> int:
+        return 1
+
+
+class TCKernel(Kernel):
+    """Tuned Correlated (TC) kernel for causal systems with Heaviside function."""
+
+    def __init__(self, omega: float = 1.0):
+        super().__init__(omega=omega)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        x1 = X1.ravel()
+        x2 = X2.ravel()
+
+        # Heaviside function
+        H1 = (x1 >= 0).astype(float)
+        H2 = (x2 >= 0).astype(float)
+
+        # TC kernel: H(x)H(x')exp(-ω max{x,x'})
+        omega = self.params['omega']
+        K = np.zeros((len(x1), len(x2)))
+
+        for i in range(len(x1)):
+            for j in range(len(x2)):
+                K[i, j] = H1[i] * H2[j] * np.exp(-omega * max(x1[i], x2[j]))
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [(1e-3, 10.0)]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['omega']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['omega'] = params[0]
+
+    @property
+    def n_params(self) -> int:
+        return 1
+
+
+class DCKernel(Kernel):
+    """Diagonal Correlated (DC) kernel for discrete systems."""
+
+    def __init__(self, alpha: float = 0.5, beta: float = 1.0, rho: float = 0.5):
+        # Ensure constraints: 0<alpha<1, beta>0, |rho|<1
+        alpha = max(0.01, min(0.99, alpha))
+        beta = max(1e-3, beta)
+        rho = max(-0.99, min(0.99, rho))
+        super().__init__(alpha=alpha, beta=beta, rho=rho)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        # Assuming X contains integer indices
+        i_vals = X1.ravel().astype(int)
+        j_vals = X2.ravel().astype(int)
+
+        alpha = self.params['alpha']
+        beta = self.params['beta']
+        rho = self.params['rho']
+
+        K = np.zeros((len(i_vals), len(j_vals)))
+
+        for idx_i, i in enumerate(i_vals):
+            for idx_j, j in enumerate(j_vals):
+                K[idx_i, idx_j] = beta * (alpha ** ((i + j) / 2.0)) * (rho ** abs(i - j))
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [
+            (0.01, 0.99),    # alpha
+            (1e-3, 1e3),     # beta
+            (-0.99, 0.99)    # rho
+        ]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['alpha'], self.params['beta'], self.params['rho']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['alpha'] = max(0.01, min(0.99, params[0]))
+        self.params['beta'] = max(1e-3, params[1])
+        self.params['rho'] = max(-0.99, min(0.99, params[2]))
+
+    @property
+    def n_params(self) -> int:
+        return 3
+
+
+class DIKernel(Kernel):
+    """Diagonal Independent (DI) kernel for discrete systems."""
+
+    def __init__(self, beta: float = 1.0, alpha: float = 0.5):
+        # Ensure constraints: 0<alpha<1, beta>0
+        alpha = max(0.01, min(0.99, alpha))
+        beta = max(1e-3, beta)
+        super().__init__(beta=beta, alpha=alpha)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        # Assuming X contains integer indices
+        i_vals = X1.ravel().astype(int)
+        j_vals = X2.ravel().astype(int)
+
+        beta = self.params['beta']
+        alpha = self.params['alpha']
+
+        K = np.zeros((len(i_vals), len(j_vals)))
+
+        for idx_i, i in enumerate(i_vals):
+            for idx_j, j in enumerate(j_vals):
+                if i == j:
+                    K[idx_i, idx_j] = beta * (alpha ** i)
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [
+            (1e-3, 1e3),     # beta
+            (0.01, 0.99)     # alpha
+        ]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['beta'], self.params['alpha']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['beta'] = max(1e-3, params[0])
+        self.params['alpha'] = max(0.01, min(0.99, params[1]))
+
+    @property
+    def n_params(self) -> int:
+        return 2
+
+
+class FirstOrderStableSplineKernel(Kernel):
+    """First-order stable spline kernel K_1(s,t;β) = exp(-β min(s,t))."""
+
+    def __init__(self, beta: float = 1.0):
+        super().__init__(beta=beta)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        s_vals = X1.ravel()
+        t_vals = X2.ravel()
+
+        beta = self.params['beta']
+
+        # K_1(s,t;β) = exp(-β min(s,t))
+        K = np.exp(-beta * np.minimum.outer(s_vals, t_vals))
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [(1e-3, 10.0)]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['beta']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['beta'] = params[0]
+
+    @property
+    def n_params(self) -> int:
+        return 1
+
+
+class SecondOrderStableSplineKernel(Kernel):
+    """Second-order stable spline kernel."""
+
+    def __init__(self, beta: float = 1.0):
+        super().__init__(beta=beta)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        s_vals = X1.ravel()
+        t_vals = X2.ravel()
+
+        beta = self.params['beta']
+
+        # K_2(s,t;β) = 0.5*exp(-β(s+t+max{s,t})) - (1/6)*exp(-3β*max{s,t})
+        s_grid, t_grid = np.meshgrid(s_vals, t_vals, indexing='ij')
+        max_st = np.maximum(s_grid, t_grid)
+        
+        K = (0.5 * np.exp(-beta * (s_grid + t_grid + max_st)) - 
+             (1.0/6.0) * np.exp(-3 * beta * max_st))
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [(1e-3, 10.0)]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['beta']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['beta'] = params[0]
+
+    @property
+    def n_params(self) -> int:
+        return 1
+
+
+class HighFrequencyStableSplineKernel(Kernel):
+    """High-frequency stable spline kernel."""
+
+    def __init__(self, beta: float = 1.0):
+        super().__init__(beta=beta)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        s_vals = X1.ravel()
+        t_vals = X2.ravel()
+
+        beta = self.params['beta']
+
+        # K_HF(s,t;β) = (-1)^(s+t) * max(exp(-βs), exp(-βt))
+        s_grid, t_grid = np.meshgrid(s_vals, t_vals, indexing='ij')
+        
+        # For continuous values, we'll use floor to get integer exponent
+        sign = (-1) ** (np.floor(s_grid) + np.floor(t_grid))
+        K = sign * np.maximum(np.exp(-beta * s_grid), np.exp(-beta * t_grid))
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [(1e-3, 10.0)]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['beta']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['beta'] = params[0]
+
+    @property
+    def n_params(self) -> int:
+        return 1
+
+
+class StableSplineKernel(Kernel):
+    """Stable Spline kernel for system identification with BIBO stability."""
+
+    def __init__(self, beta: float = 0.5, sigma_f: float = 1.0):
+        super().__init__(beta=beta, sigma_f=sigma_f)
+
+    def __call__(self, X1: np.ndarray, X2: Optional[np.ndarray] = None) -> np.ndarray:
+        if X2 is None:
+            X2 = X1
+
+        x_vals = X1.ravel()
+        x_prime_vals = X2.ravel()
+
+        beta = self.params['beta']
+        sigma_f2 = self.params['sigma_f'] ** 2
+
+        # Exponential transformation
+        exp_x = np.exp(-beta * x_vals)
+        exp_xp = np.exp(-beta * x_prime_vals)
+
+        # Compute r and R matrices
+        r = np.minimum.outer(exp_x, exp_xp)
+        R = np.maximum.outer(exp_x, exp_xp)
+
+        # k(x,x') = σ_f^2 * (1/2) * r^2 * (R - r/3)
+        K = sigma_f2 * 0.5 * r**2 * (R - r/3)
+
+        return K
+
+    def _get_default_bounds(self) -> List[Tuple[float, float]]:
+        return [
+            (1e-3, 10.0),    # beta
+            (1e-3, 1e3)      # sigma_f
+        ]
+
+    def get_params(self) -> np.ndarray:
+        return np.array([self.params['beta'], self.params['sigma_f']])
+
+    def set_params(self, params: np.ndarray) -> None:
+        self.params['beta'] = params[0]
+        self.params['sigma_f'] = params[1]
+
+    @property
+    def n_params(self) -> int:
+        return 2
 
 
 # =====================

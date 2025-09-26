@@ -385,6 +385,8 @@ def main() -> int:
                         help="MAT file to read frequency grid from (keys: frequency,freq,omega,w,P[0,:]).")
     parser.add_argument("--n-files", type=int, default=None,
                         help="Use only the first N MAT files after expansion/sort.")
+    parser.add_argument("--time-duration", type=float, default=None,
+                        help="Use only specified duration (in seconds) from each file. Works only with --n-files 1")
 
     args = parser.parse_args()
     if args.nd <= 0:
@@ -395,6 +397,11 @@ def main() -> int:
         parser.error("--dropseconds must be >= 0.")
     if args.n_files is not None and args.n_files <= 0:
         parser.error("--n-files must be positive when provided.")
+    if args.time_duration is not None:
+        if args.time_duration <= 0:
+            parser.error("--time-duration must be positive when provided.")
+        if args.n_files != 1:
+            parser.error("--time-duration only works with --n-files 1")
 
     # Expand MAT inputs
     mat_files = resolve_mat_files(args.mat_files, recursive=args.recursive)
@@ -440,6 +447,23 @@ def main() -> int:
     for mat_path in mat_files:
         t, u, y = load_time_u_y(mat_path, y_col=args.y_col)
         dt, T, is_mono = describe_timebase(t)
+
+        # Handle time duration limitation if specified
+        if args.time_duration is not None and args.n_files == 1:
+            t_start = t[0] + args.dropseconds
+            t_end = t_start + args.time_duration
+            mask = (t >= t_start) & (t <= t_end)
+            if not np.any(mask):
+                raise ValueError(f"No data points found in time range [{t_start:.2f}, {t_end:.2f}]")
+            t = t[mask]
+            u = u[mask]
+            y = y[mask]
+            dt, T, is_mono = describe_timebase(t)
+            # Since we've already trimmed the data, don't drop again in synchronous_coefficients_trapz
+            drop_seconds_to_use = 0.0
+        else:
+            drop_seconds_to_use = args.dropseconds
+
         total_samples += t.size
         total_seconds += max(T, 0.0)
 
@@ -447,14 +471,15 @@ def main() -> int:
             order = np.argsort(t)
             t = t[order]; u = u[order]; y = y[order]
 
-        U = synchronous_coefficients_trapz(t, u, omega, args.dropseconds, subtract_mean)
-        Y = synchronous_coefficients_trapz(t, y, omega, args.dropseconds, subtract_mean)
+        U = synchronous_coefficients_trapz(t, u, omega, drop_seconds_to_use, subtract_mean)
+        Y = synchronous_coefficients_trapz(t, y, omega, drop_seconds_to_use, subtract_mean)
         U_list.append(U); Y_list.append(Y)
 
         dt_str = f"{dt:.6g}" if np.isfinite(dt) else "n/a"
         dur_str = f"{T:.2f}"
         print(f"{mat_path.name}: {t.size} samples, dt~{dt_str} s, span~{dur_str} s, "
-              f"transient_dropped={args.dropseconds:.2f}s")
+              f"transient_dropped={args.dropseconds:.2f}s" +
+              (f", duration_limited={args.time_duration:.2f}s" if args.time_duration else ""))
 
     hours = total_seconds / 3600.0 if total_seconds else 0.0
     print(f"Accumulated {len(mat_files)} file(s): {total_samples} samples, {total_seconds:.2f} s (~{hours:.2f} h).")
