@@ -18,7 +18,10 @@ Usage:
       --extract-fir --fir-length 1024
       --fir-validation-mat input/input_test_20250912_165937.mat
       --out-dir output_complete
-    python src/unified_pipeline.py input/*.mat --n-files 1 --nd 100      --kernel rbf --normalize --log-frequency       --extract-fir --fir-length 1024       --fir-validation-mat input/input_test_20250912_165937.mat       --out-dir output_complete
+    python src/unified_pipeline.py input/*.mat --n-files 1 --nd 100 --freq-method fourier
+      --kernel rbf --normalize --extract-fir --fir-length 1024
+      --fir-validation-mat input/input_test_20250912_165937.mat
+      --out-dir output_fourier
 """
 
 import argparse
@@ -734,6 +737,39 @@ def run_frequency_response(mat_files: List[str], output_dir: Path, n_files: int 
     return frf_csv
 
 
+def run_fourier_transform(mat_files: List[str], output_dir: Path, n_files: int = 1, time_duration: Optional[float] = None, nd: int = 100) -> Path:
+    """Run fourier_transform.py and return path to output CSV."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable,
+        'src/fourier_transform.py',
+        *mat_files,
+        '--out-dir', str(output_dir),
+        '--out-prefix', 'unified',
+        '--nd', str(nd)
+    ]
+
+    if n_files is not None:
+        cmd.extend(['--n-files', str(n_files)])
+
+    if time_duration is not None:
+        cmd.extend(['--time-duration', str(time_duration)])
+
+    print(f"Running fourier_transform.py with command: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Error running fourier_transform.py:\n{result.stderr}")
+        raise RuntimeError(f"fourier_transform.py failed with code {result.returncode}")
+
+    fft_csv = output_dir / 'unified_fft.csv'
+    if not fft_csv.exists():
+        raise RuntimeError(f"Expected output file not found: {fft_csv}")
+
+    return fft_csv
+
+
 # =====================
 # Visualization Functions
 # =====================
@@ -847,17 +883,22 @@ def run_gp_pipeline(config: argparse.Namespace):
     output_dir = Path(config.out_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Get FRF data
+    # Step 1: Get frequency domain data
     if config.use_existing:
-        print(f"Using existing FRF data from: {config.use_existing}")
-        frf_csv = Path(config.use_existing)
+        print(f"Using existing frequency data from: {config.use_existing}")
+        freq_csv = Path(config.use_existing)
     else:
-        print("Running frequency_response.py...")
-        frf_csv = run_frequency_response(config.mat_files, output_dir, config.n_files, config.time_duration, config.nd)
+        # Choose frequency analysis method
+        if hasattr(config, 'freq_method') and config.freq_method == 'fourier':
+            print("Running Fourier transform analysis...")
+            freq_csv = run_fourier_transform(config.mat_files, output_dir, config.n_files, config.time_duration, config.nd)
+        else:
+            print("Running frequency response function (FRF) analysis...")
+            freq_csv = run_frequency_response(config.mat_files, output_dir, config.n_files, config.time_duration, config.nd)
 
-    # Step 2: Load FRF data
-    print("Loading FRF data...")
-    frf_df = load_frf_data(frf_csv)
+    # Step 2: Load frequency domain data
+    print("Loading frequency domain data...")
+    frf_df = load_frf_data(freq_csv)
 
     omega = frf_df['omega_rad_s'].values
     G_complex = frf_df['ReG'].values + 1j * frf_df['ImG'].values
@@ -1293,6 +1334,9 @@ def main():
                       help='Time duration in seconds to use from each file (only works with --n-files 1)')
     parser.add_argument('--nd', type=int, default=100,
                       help='Number of frequency points (N_d) for frequency response analysis (default: 100)')
+    parser.add_argument('--freq-method', type=str, default='frf',
+                      choices=['frf', 'fourier'],
+                      help='Frequency analysis method: frf (frequency response function) or fourier (FFT-based) (default: frf)')
 
     # Method selection
     parser.add_argument('--method', type=str, default='gp',
@@ -1511,7 +1555,8 @@ def run_unified_system_identification(omega: np.ndarray, G_complex: np.ndarray,
 
 
 def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_output',
-                          fir_validation_mat: Optional[str] = None, nd_values: List[int] = None):
+                          fir_validation_mat: Optional[str] = None, nd_values: List[int] = None,
+                          freq_method: str = 'frf'):
     """
     Run comprehensive tests with different kernels, time intervals, file counts, and nd values.
     Save overall RMSE results in CSV format.
@@ -1521,21 +1566,22 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
         output_base_dir: Base directory for output
         fir_validation_mat: MAT file for FIR validation
         nd_values: List of nd values to test (default: [10, 30, 50, 100])
+        freq_method: Frequency analysis method ('frf' or 'fourier')
     """
     import csv
     from datetime import datetime
 
     # Test configurations
     # GP kernels
-    # kernels = ['rbf', 'matern', 'matern12', 'matern32', 'matern52', 'rq', 'exp', 'tc', 'dc', 'di',
-    #            'ss1', 'ss2', 'sshf', 'stable_spline']
+    kernels = ['rbf', 'matern', 'matern12', 'matern32', 'matern52', 'rq', 'exp', 'tc', 'dc', 'di',
+               'ss1', 'ss2', 'sshf', 'stable_spline']
     # Classical and ML methods
     classical_methods = ['nls', 'ls', 'iwls', 'tls', 'ml', 'log', 'lpm']
     ml_methods = ['rf', 'gbr', 'svm']
 
     # Combine all methods
-    # all_methods = ['gp_' + k for k in kernels] + classical_methods + ml_methods
-    all_methods = classical_methods + ml_methods
+    all_methods = ['gp_' + k for k in kernels] + classical_methods + ml_methods
+    # all_methods = classical_methods + ml_methods
 
     # Set default nd values if not provided
     if nd_values is None:
@@ -1622,7 +1668,8 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 fir_validation_mat=fir_validation_mat,
                                 method=method,  # Add method type
                                 is_gp=is_gp,  # Flag for GP vs other methods
-                                nd=nd  # Number of frequency points
+                                nd=nd,  # Number of frequency points
+                                freq_method=freq_method  # Frequency analysis method
                             )
 
                             # Run the pipeline
@@ -1737,7 +1784,8 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             fir_validation_mat=fir_validation_mat,
                             method=method,
                             is_gp=is_gp,
-                            nd=nd
+                            nd=nd,
+                            freq_method=freq_method
                         )
 
                         # Run the pipeline
