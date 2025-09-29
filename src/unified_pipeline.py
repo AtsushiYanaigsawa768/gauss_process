@@ -13,12 +13,12 @@ The kernel architecture is designed to be highly extensible for adding new kerne
 Usage:
     python src/unified_pipeline.py input/*.mat --kernel rbf --out-dir gp_output
     python src/unified_pipeline.py --use-existing output/matched_frf.csv --kernel matern --nu 2.5
-    python src/unified_pipeline.py input/*.mat --n-files 1 
-      --kernel rbf --normalize --log-frequency 
-      --extract-fir --fir-length 1024 
-      --fir-validation-mat input/input_test_20250912_165937.mat 
+    python src/unified_pipeline.py input/*.mat --n-files 1 --nd 50
+      --kernel rbf --normalize --log-frequency
+      --extract-fir --fir-length 1024
+      --fir-validation-mat input/input_test_20250912_165937.mat
       --out-dir output_complete
-    python src/unified_pipeline.py input/*.mat --n-files 1       --kernel rbf --normalize --log-frequency       --extract-fir --fir-length 1024       --fir-validation-mat input/input_test_20250912_165937.mat       --out-dir output_complete
+    python src/unified_pipeline.py input/*.mat --n-files 1 --nd 100      --kernel rbf --normalize --log-frequency       --extract-fir --fir-length 1024       --fir-validation-mat input/input_test_20250912_165937.mat       --out-dir output_complete
 """
 
 import argparse
@@ -703,7 +703,7 @@ def load_frf_data(frf_file: Path) -> pd.DataFrame:
     return df
 
 
-def run_frequency_response(mat_files: List[str], output_dir: Path, n_files: int = 1, time_duration: Optional[float] = None) -> Path:
+def run_frequency_response(mat_files: List[str], output_dir: Path, n_files: int = 1, time_duration: Optional[float] = None, nd: int = 100) -> Path:
     """Run frequency_response.py and return path to output CSV."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -713,7 +713,8 @@ def run_frequency_response(mat_files: List[str], output_dir: Path, n_files: int 
         *mat_files,
         '--n-files', str(n_files),
         '--out-dir', str(output_dir),
-        '--out-prefix', 'unified'
+        '--out-prefix', 'unified',
+        '--nd', str(nd)
     ]
 
     if time_duration is not None and n_files == 1:
@@ -852,7 +853,7 @@ def run_gp_pipeline(config: argparse.Namespace):
         frf_csv = Path(config.use_existing)
     else:
         print("Running frequency_response.py...")
-        frf_csv = run_frequency_response(config.mat_files, output_dir, config.n_files, config.time_duration)
+        frf_csv = run_frequency_response(config.mat_files, output_dir, config.n_files, config.time_duration, config.nd)
 
     # Step 2: Load FRF data
     print("Loading FRF data...")
@@ -1290,6 +1291,8 @@ def main():
                       help='Number of MAT files to process (default: 1)')
     parser.add_argument('--time-duration', type=float, default=None,
                       help='Time duration in seconds to use from each file (only works with --n-files 1)')
+    parser.add_argument('--nd', type=int, default=100,
+                      help='Number of frequency points (N_d) for frequency response analysis (default: 100)')
 
     # Method selection
     parser.add_argument('--method', type=str, default='gp',
@@ -1349,6 +1352,9 @@ def main():
             parser.error("--time-duration must be positive")
         if args.n_files != 1:
             parser.error("--time-duration only works with --n-files 1")
+
+    if args.nd <= 0:
+        parser.error("--nd must be positive")
 
     # Add method info to args
     args.is_gp = args.method == 'gp'
@@ -1505,15 +1511,16 @@ def run_unified_system_identification(omega: np.ndarray, G_complex: np.ndarray,
 
 
 def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_output',
-                          fir_validation_mat: Optional[str] = None):
+                          fir_validation_mat: Optional[str] = None, nd_values: List[int] = None):
     """
-    Run comprehensive tests with different kernels, time intervals, and file counts.
+    Run comprehensive tests with different kernels, time intervals, file counts, and nd values.
     Save overall RMSE results in CSV format.
 
     Args:
         mat_files: List of MAT files to test
         output_base_dir: Base directory for output
         fir_validation_mat: MAT file for FIR validation
+        nd_values: List of nd values to test (default: [10, 30, 50, 100])
     """
     import csv
     from datetime import datetime
@@ -1529,6 +1536,10 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     # Combine all methods
     # all_methods = ['gp_' + k for k in kernels] + classical_methods + ml_methods
     all_methods = classical_methods + ml_methods
+
+    # Set default nd values if not provided
+    if nd_values is None:
+        nd_values = [10, 30, 50, 100]
 
     time_durations = [10.0, 30.0, 60.0, 120.0, 300.0, 600.0, None]  # seconds, None means use all data
     n_files_list = [1, 2, 5, 10]  # None means use all files
@@ -1546,6 +1557,7 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     print(f"ML methods: {', '.join(ml_methods)}")
     print(f"Time durations: {time_durations}")
     print(f"File counts: {n_files_list}")
+    print(f"Frequency points (nd): {nd_values}")
     print("=" * 80)
 
     total_tests = 0
@@ -1563,37 +1575,155 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
         else:
             kernel = None
 
-        # For each number of files
-        for n_files in n_files_list:
-            if n_files is not None and n_files > len(mat_files):
-                continue  # Skip if requesting more files than available
+        # For each nd value
+        for nd in nd_values:
+            # For each number of files
+            for n_files in n_files_list:
+                if n_files is not None and n_files > len(mat_files):
+                    continue  # Skip if requesting more files than available
 
-            actual_n_files = n_files if n_files is not None else len(mat_files)
+                actual_n_files = n_files if n_files is not None else len(mat_files)
 
-            # For n_files = 1, test different time durations
-            if n_files == 1:
-                for time_duration in time_durations:
-                    if time_duration is None:
-                        time_str = "full"
-                    else:
-                        time_str = f"{time_duration}s"
+                # For n_files = 1, test different time durations
+                if n_files == 1:
+                    for time_duration in time_durations:
+                        if time_duration is None:
+                            time_str = "full"
+                        else:
+                            time_str = f"{time_duration}s"
 
-                    test_name = f"{method}_1file_{time_str}"
+                        test_name = f"{method}_nd{nd}_1file_{time_str}"
+                        output_dir = Path(output_base_dir) / timestamp / test_name
+
+                        print(f"\nTest: {test_name}")
+                        print(f"  Method: {method}")
+                        print(f"  Files: 1")
+                        print(f"  Duration: {time_str}")
+                        print(f"  nd: {nd}")
+
+                        try:
+                            # Create argparse-like namespace
+                            config = argparse.Namespace(
+                                mat_files=mat_files[:1],
+                                use_existing=None,
+                                n_files=1,
+                                time_duration=time_duration,
+                                kernel=kernel if is_gp else 'rbf',  # Default kernel for GP
+                                nu=2.5 if kernel == 'matern' else None,
+                                gp_mode='separate',
+                                noise_variance=1e-6,
+                                normalize=True,
+                                log_frequency=True,
+                                optimize=True,
+                                n_restarts=3,
+                                out_dir=str(output_dir),
+                                extract_fir=True,
+                                fir_length=1024,
+                                fir_validation_mat=fir_validation_mat,
+                                method=method,  # Add method type
+                                is_gp=is_gp,  # Flag for GP vs other methods
+                                nd=nd  # Number of frequency points
+                            )
+
+                            # Run the pipeline
+                            run_gp_pipeline(config)
+
+                            # Extract results
+                            if is_gp:
+                                results_file = output_dir / 'gp_results.json'
+                            else:
+                                results_file = output_dir / 'results.json'
+
+                            if results_file.exists():
+                                with open(results_file, 'r') as f:
+                                    results = json.load(f)
+
+                                # Extract metrics
+                                if is_gp:
+                                    rmse_real = results.get('real', {}).get('rmse', None)
+                                    rmse_imag = results.get('imag', {}).get('rmse', None)
+                                    r2_real = results.get('real', {}).get('r2', None)
+                                    r2_imag = results.get('imag', {}).get('r2', None)
+                                else:
+                                    # Non-GP methods store metrics directly
+                                    rmse_real = results.get('rmse_real', None)
+                                    rmse_imag = results.get('rmse_imag', None)
+                                    r2_real = results.get('r2_real', None)
+                                    r2_imag = results.get('r2_imag', None)
+
+                                # FIR validation results if available
+                                fir_rmse = None
+                                fir_r2 = None
+                                fir_fit = None
+                                if 'fir_extraction' in results:
+                                    fir_rmse = results['fir_extraction'].get('rmse', None)
+                                    fir_r2 = results['fir_extraction'].get('r2', None)
+                                    fir_fit = results['fir_extraction'].get('fit_percent', None)
+
+                                # Store result
+                                result_entry = {
+                                    'test_name': test_name,
+                                    'kernel': kernel,
+                                    'n_files': 1,
+                                    'time_duration': time_duration,
+                                    'nd': nd,
+                                    'gp_rmse_real': rmse_real,
+                                    'gp_rmse_imag': rmse_imag,
+                                    'gp_r2_real': r2_real,
+                                    'gp_r2_imag': r2_imag,
+                                    'fir_rmse': fir_rmse,
+                                    'fir_r2': fir_r2,
+                                    'fir_fit_percent': fir_fit,
+                                    'status': 'success'
+                                }
+                                all_results.append(result_entry)
+
+                                print(f"  ✓ Success - GP RMSE Real: {rmse_real:.3e}, Imag: {rmse_imag:.3e}")
+                                if fir_rmse:
+                                    print(f"            FIR RMSE: {fir_rmse:.3e}, FIT: {fir_fit:.1f}%")
+                            else:
+                                print(f"  ✗ Results file not found")
+                                all_results.append({
+                                    'test_name': test_name,
+                                    'kernel': kernel,
+                                    'n_files': 1,
+                                    'time_duration': time_duration,
+                                    'nd': nd,
+                                    'status': 'no_results_file'
+                                })
+
+                        except Exception as e:
+                            print(f"  ✗ Error: {str(e)}")
+                            all_results.append({
+                                'test_name': test_name,
+                                'kernel': kernel,
+                                'n_files': 1,
+                                'time_duration': time_duration,
+                                'nd': nd,
+                                'status': 'error',
+                                'error_message': str(e)
+                            })
+
+                        total_tests += 1
+
+                # For n_files > 1, use all time from each file
+                else:
+                    test_name = f"{method}_nd{nd}_{actual_n_files}files"
                     output_dir = Path(output_base_dir) / timestamp / test_name
 
                     print(f"\nTest: {test_name}")
                     print(f"  Method: {method}")
-                    print(f"  Files: 1")
-                    print(f"  Duration: {time_str}")
+                    print(f"  Files: {actual_n_files}")
+                    print(f"  nd: {nd}")
 
                     try:
                         # Create argparse-like namespace
                         config = argparse.Namespace(
-                            mat_files=mat_files[:1],
+                            mat_files=mat_files[:actual_n_files] if n_files is not None else mat_files,
                             use_existing=None,
-                            n_files=1,
-                            time_duration=time_duration,
-                            kernel=kernel if is_gp else 'rbf',  # Default kernel for GP
+                            n_files=n_files if n_files is not None else len(mat_files),
+                            time_duration=None,
+                            kernel=kernel if is_gp else 'rbf',
                             nu=2.5 if kernel == 'matern' else None,
                             gp_mode='separate',
                             noise_variance=1e-6,
@@ -1605,8 +1735,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             extract_fir=True,
                             fir_length=1024,
                             fir_validation_mat=fir_validation_mat,
-                            method=method,  # Add method type
-                            is_gp=is_gp  # Flag for GP vs other methods
+                            method=method,
+                            is_gp=is_gp,
+                            nd=nd
                         )
 
                         # Run the pipeline
@@ -1629,7 +1760,6 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 r2_real = results.get('real', {}).get('r2', None)
                                 r2_imag = results.get('imag', {}).get('r2', None)
                             else:
-                                # Non-GP methods store metrics directly
                                 rmse_real = results.get('rmse_real', None)
                                 rmse_imag = results.get('rmse_imag', None)
                                 r2_real = results.get('r2_real', None)
@@ -1648,8 +1778,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             result_entry = {
                                 'test_name': test_name,
                                 'kernel': kernel,
-                                'n_files': 1,
-                                'time_duration': time_duration,
+                                'n_files': actual_n_files,
+                                'time_duration': None,
+                                'nd': nd,
                                 'gp_rmse_real': rmse_real,
                                 'gp_rmse_imag': rmse_imag,
                                 'gp_r2_real': r2_real,
@@ -1669,8 +1800,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             all_results.append({
                                 'test_name': test_name,
                                 'kernel': kernel,
-                                'n_files': 1,
-                                'time_duration': time_duration,
+                                'n_files': actual_n_files,
+                                'time_duration': None,
+                                'nd': nd,
                                 'status': 'no_results_file'
                             })
 
@@ -1679,122 +1811,14 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                         all_results.append({
                             'test_name': test_name,
                             'kernel': kernel,
-                            'n_files': 1,
-                            'time_duration': time_duration,
+                            'n_files': actual_n_files,
+                            'time_duration': None,
+                            'nd': nd,
                             'status': 'error',
                             'error_message': str(e)
                         })
 
-                    total_tests += 1
-
-            # For n_files > 1, use all time from each file
-            else:
-                test_name = f"{method}_{actual_n_files}files"
-                output_dir = Path(output_base_dir) / timestamp / test_name
-
-                print(f"\nTest: {test_name}")
-                print(f"  Method: {method}")
-                print(f"  Files: {actual_n_files}")
-
-                try:
-                    # Create argparse-like namespace
-                    config = argparse.Namespace(
-                        mat_files=mat_files[:actual_n_files] if n_files is not None else mat_files,
-                        use_existing=None,
-                        n_files=n_files if n_files is not None else len(mat_files),
-                        time_duration=None,
-                        kernel=kernel if is_gp else 'rbf',
-                        nu=2.5 if kernel == 'matern' else None,
-                        gp_mode='separate',
-                        noise_variance=1e-6,
-                        normalize=True,
-                        log_frequency=True,
-                        optimize=True,
-                        n_restarts=3,
-                        out_dir=str(output_dir),
-                        extract_fir=True,
-                        fir_length=1024,
-                        fir_validation_mat=fir_validation_mat,
-                        method=method,
-                        is_gp=is_gp
-                    )
-
-                    # Run the pipeline
-                    run_gp_pipeline(config)
-
-                    # Extract results
-                    if is_gp:
-                        results_file = output_dir / 'gp_results.json'
-                    else:
-                        results_file = output_dir / 'results.json'
-
-                    if results_file.exists():
-                        with open(results_file, 'r') as f:
-                            results = json.load(f)
-
-                        # Extract metrics
-                        if is_gp:
-                            rmse_real = results.get('real', {}).get('rmse', None)
-                            rmse_imag = results.get('imag', {}).get('rmse', None)
-                            r2_real = results.get('real', {}).get('r2', None)
-                            r2_imag = results.get('imag', {}).get('r2', None)
-                        else:
-                            rmse_real = results.get('rmse_real', None)
-                            rmse_imag = results.get('rmse_imag', None)
-                            r2_real = results.get('r2_real', None)
-                            r2_imag = results.get('r2_imag', None)
-
-                        # FIR validation results if available
-                        fir_rmse = None
-                        fir_r2 = None
-                        fir_fit = None
-                        if 'fir_extraction' in results:
-                            fir_rmse = results['fir_extraction'].get('rmse', None)
-                            fir_r2 = results['fir_extraction'].get('r2', None)
-                            fir_fit = results['fir_extraction'].get('fit_percent', None)
-
-                        # Store result
-                        result_entry = {
-                            'test_name': test_name,
-                            'kernel': kernel,
-                            'n_files': actual_n_files,
-                            'time_duration': None,
-                            'gp_rmse_real': rmse_real,
-                            'gp_rmse_imag': rmse_imag,
-                            'gp_r2_real': r2_real,
-                            'gp_r2_imag': r2_imag,
-                            'fir_rmse': fir_rmse,
-                            'fir_r2': fir_r2,
-                            'fir_fit_percent': fir_fit,
-                            'status': 'success'
-                        }
-                        all_results.append(result_entry)
-
-                        print(f"  ✓ Success - GP RMSE Real: {rmse_real:.3e}, Imag: {rmse_imag:.3e}")
-                        if fir_rmse:
-                            print(f"            FIR RMSE: {fir_rmse:.3e}, FIT: {fir_fit:.1f}%")
-                    else:
-                        print(f"  ✗ Results file not found")
-                        all_results.append({
-                            'test_name': test_name,
-                            'kernel': kernel,
-                            'n_files': actual_n_files,
-                            'time_duration': None,
-                            'status': 'no_results_file'
-                        })
-
-                except Exception as e:
-                    print(f"  ✗ Error: {str(e)}")
-                    all_results.append({
-                        'test_name': test_name,
-                        'kernel': kernel,
-                        'n_files': actual_n_files,
-                        'time_duration': None,
-                        'status': 'error',
-                        'error_message': str(e)
-                    })
-
-                total_tests += 1
+                        total_tests += 1
 
     # Save overall results to CSV
     csv_file = Path(output_base_dir) / timestamp / 'overall_results.csv'
@@ -1802,7 +1826,7 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
     # Define CSV columns
     fieldnames = [
-        'test_name', 'kernel', 'n_files', 'time_duration',
+        'test_name', 'kernel', 'n_files', 'time_duration', 'nd',
         'gp_rmse_real', 'gp_rmse_imag', 'gp_r2_real', 'gp_r2_imag',
         'fir_rmse', 'fir_r2', 'fir_fit_percent',
         'status', 'error_message'
