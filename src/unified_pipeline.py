@@ -1554,12 +1554,71 @@ def run_unified_system_identification(omega: np.ndarray, G_complex: np.ndarray,
     return results
 
 
+def save_results_to_csv(result_entry: Dict, output_base_dir: Path, timestamp: str):
+    """
+    Save a single test result to multiple CSV files incrementally.
+
+    Args:
+        result_entry: Dictionary containing test results
+        output_base_dir: Base output directory
+        timestamp: Timestamp string for the test run
+    """
+    import csv
+
+    base_path = Path(output_base_dir) / timestamp
+    base_path.mkdir(parents=True, exist_ok=True)
+
+    # Define CSV columns
+    fieldnames = [
+        'test_name', 'kernel', 'n_files', 'time_duration', 'nd',
+        'gp_rmse_real', 'gp_rmse_imag', 'gp_r2_real', 'gp_r2_imag',
+        'fir_rmse', 'fir_r2', 'fir_fit_percent',
+        'status', 'error_message'
+    ]
+
+    # 1. Save to overall results CSV
+    overall_csv = base_path / 'overall_results.csv'
+    file_exists = overall_csv.exists()
+
+    with open(overall_csv, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(result_entry)
+
+    # 2. Save to method-specific CSV
+    method_name = result_entry.get('test_name', '').split('_nd')[0]  # Extract method name
+    if method_name:
+        method_csv = base_path / f'results_by_method_{method_name}.csv'
+        file_exists = method_csv.exists()
+
+        with open(method_csv, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(result_entry)
+
+    # 3. Save to nd-specific CSV
+    nd_value = result_entry.get('nd')
+    if nd_value is not None:
+        nd_csv = base_path / f'results_by_nd_{nd_value}.csv'
+        file_exists = nd_csv.exists()
+
+        with open(nd_csv, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(result_entry)
+
+    print(f"  📝 Results saved to CSVs (overall, method: {method_name}, nd: {nd_value})")
+
+
 def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_output',
                           fir_validation_mat: Optional[str] = None, nd_values: List[int] = None,
                           freq_method: str = 'frf'):
     """
     Run comprehensive tests with different kernels, time intervals, file counts, and nd values.
-    Save overall RMSE results in CSV format.
+    Save overall RMSE results in CSV format incrementally after each test.
 
     Args:
         mat_files: List of MAT files to test
@@ -1590,6 +1649,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     time_durations = [10.0, 30.0, 60.0, 120.0, 300.0, 600.0, None]  # seconds, None means use all data
     n_files_list = [1, 2, 5, 10]  # None means use all files
 
+    # Sort MAT files to ensure consistent order across all tests
+    mat_files = sorted(mat_files)
+
     # Results storage
     all_results = []
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1598,6 +1660,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     print("Starting Comprehensive System Identification Testing Suite")
     print(f"Timestamp: {timestamp}")
     print(f"Total MAT files available: {len(mat_files)}")
+    print(f"MAT files (sorted for consistency):")
+    for i, f in enumerate(mat_files, 1):
+        print(f"  [{i}] {f}")
     # print(f"GP Kernels: {', '.join(kernels)}")
     print(f"Classical methods: {', '.join(classical_methods)}")
     print(f"ML methods: {', '.join(ml_methods)}")
@@ -1643,7 +1708,7 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
                         print(f"\nTest: {test_name}")
                         print(f"  Method: {method}")
-                        print(f"  Files: 1")
+                        print(f"  Files: 1 -> Using: {mat_files[0]}")
                         print(f"  Duration: {time_str}")
                         print(f"  nd: {nd}")
 
@@ -1721,27 +1786,36 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                     'fir_rmse': fir_rmse,
                                     'fir_r2': fir_r2,
                                     'fir_fit_percent': fir_fit,
-                                    'status': 'success'
+                                    'status': 'success',
+                                    'error_message': ''
                                 }
                                 all_results.append(result_entry)
+
+                                # Save to CSV files immediately
+                                save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
                                 print(f"  ✓ Success - GP RMSE Real: {rmse_real:.3e}, Imag: {rmse_imag:.3e}")
                                 if fir_rmse:
                                     print(f"            FIR RMSE: {fir_rmse:.3e}, FIT: {fir_fit:.1f}%")
                             else:
                                 print(f"  ✗ Results file not found")
-                                all_results.append({
+                                result_entry = {
                                     'test_name': test_name,
                                     'kernel': kernel,
                                     'n_files': 1,
                                     'time_duration': time_duration,
                                     'nd': nd,
-                                    'status': 'no_results_file'
-                                })
+                                    'status': 'no_results_file',
+                                    'error_message': 'Results file not found'
+                                }
+                                all_results.append(result_entry)
+
+                                # Save error to CSV files immediately
+                                save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
                         except Exception as e:
                             print(f"  ✗ Error: {str(e)}")
-                            all_results.append({
+                            result_entry = {
                                 'test_name': test_name,
                                 'kernel': kernel,
                                 'n_files': 1,
@@ -1749,7 +1823,11 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 'nd': nd,
                                 'status': 'error',
                                 'error_message': str(e)
-                            })
+                            }
+                            all_results.append(result_entry)
+
+                            # Save error to CSV files immediately
+                            save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
                         total_tests += 1
 
@@ -1758,9 +1836,14 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                     test_name = f"{method}_nd{nd}_{actual_n_files}files"
                     output_dir = Path(output_base_dir) / timestamp / test_name
 
+                    # List of files to use
+                    files_to_use = mat_files[:actual_n_files]
+
                     print(f"\nTest: {test_name}")
                     print(f"  Method: {method}")
-                    print(f"  Files: {actual_n_files}")
+                    print(f"  Files: {actual_n_files} -> Using:")
+                    for i, f in enumerate(files_to_use, 1):
+                        print(f"    [{i}] {f}")
                     print(f"  nd: {nd}")
 
                     try:
@@ -1836,27 +1919,36 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 'fir_rmse': fir_rmse,
                                 'fir_r2': fir_r2,
                                 'fir_fit_percent': fir_fit,
-                                'status': 'success'
+                                'status': 'success',
+                                'error_message': ''
                             }
                             all_results.append(result_entry)
+
+                            # Save to CSV files immediately
+                            save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
                             print(f"  ✓ Success - GP RMSE Real: {rmse_real:.3e}, Imag: {rmse_imag:.3e}")
                             if fir_rmse:
                                 print(f"            FIR RMSE: {fir_rmse:.3e}, FIT: {fir_fit:.1f}%")
                         else:
                             print(f"  ✗ Results file not found")
-                            all_results.append({
+                            result_entry = {
                                 'test_name': test_name,
                                 'kernel': kernel,
                                 'n_files': actual_n_files,
                                 'time_duration': None,
                                 'nd': nd,
-                                'status': 'no_results_file'
-                            })
+                                'status': 'no_results_file',
+                                'error_message': 'Results file not found'
+                            }
+                            all_results.append(result_entry)
+
+                            # Save error to CSV files immediately
+                            save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
                     except Exception as e:
                         print(f"  ✗ Error: {str(e)}")
-                        all_results.append({
+                        result_entry = {
                             'test_name': test_name,
                             'kernel': kernel,
                             'n_files': actual_n_files,
@@ -1864,31 +1956,26 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             'nd': nd,
                             'status': 'error',
                             'error_message': str(e)
-                        })
+                        }
+                        all_results.append(result_entry)
+
+                        # Save error to CSV files immediately
+                        save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
                         total_tests += 1
 
-    # Save overall results to CSV
+    # CSV files are saved incrementally after each test (no need for final save)
     csv_file = Path(output_base_dir) / timestamp / 'overall_results.csv'
-    csv_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Define CSV columns
-    fieldnames = [
-        'test_name', 'kernel', 'n_files', 'time_duration', 'nd',
-        'gp_rmse_real', 'gp_rmse_imag', 'gp_r2_real', 'gp_r2_imag',
-        'fir_rmse', 'fir_r2', 'fir_fit_percent',
-        'status', 'error_message'
-    ]
-
-    with open(csv_file, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(all_results)
 
     print("\n" + "=" * 80)
     print(f"Comprehensive testing complete!")
     print(f"Total tests run: {total_tests}")
-    print(f"Results saved to: {csv_file}")
+    print(f"Successful tests: {sum(1 for r in all_results if r.get('status') == 'success')}")
+    print(f"Failed tests: {sum(1 for r in all_results if r.get('status') != 'success')}")
+    print(f"\nResults saved incrementally to:")
+    print(f"  - Overall: {csv_file}")
+    print(f"  - By method: {csv_file.parent}/results_by_method_*.csv")
+    print(f"  - By nd: {csv_file.parent}/results_by_nd_*.csv")
     print("=" * 80)
 
     # Generate summary report
@@ -1964,6 +2051,13 @@ if __name__ == "__main__":
             print(f"Error: No MAT files found matching pattern: {mat_pattern}")
             sys.exit(1)
 
+        # Sort MAT files to ensure consistent order across all test runs
+        mat_files = sorted(mat_files)
+        print(f"Found {len(mat_files)} MAT files (sorted):")
+        for i, f in enumerate(mat_files, 1):
+            print(f"  [{i}] {f}")
+        print()
+
         # Find validation MAT file
         validation_mat = None
         for f in mat_files:
@@ -1975,9 +2069,55 @@ if __name__ == "__main__":
             # Use first file as validation if no test file found
             validation_mat = mat_files[0]
             print(f"Warning: No test file found, using {validation_mat} for validation")
+        else:
+            print(f"Using validation file: {validation_mat}")
+        print()
 
-        # Run comprehensive test
-        run_comprehensive_test(mat_files, fir_validation_mat=validation_mat)
+        # Run comprehensive test with BOTH frequency methods
+        print("=" * 80)
+        print("PHASE 1: Testing with FRF (Log-scale frequency analysis)")
+        print("=" * 80)
+        print()
+
+        # Phase 1: FRF (log-scale) method
+        run_comprehensive_test(
+            mat_files,
+            output_base_dir='test_output_frf',
+            fir_validation_mat=validation_mat,
+            freq_method='frf'
+        )
+
+        print("\n" + "=" * 80)
+        print("PHASE 1 COMPLETED: FRF tests finished")
+        print("=" * 80)
+        print()
+
+        # Phase 2: Fourier (normal-scale) method
+        print("=" * 80)
+        print("PHASE 2: Testing with Fourier Transform (Normal-scale frequency analysis)")
+        print("=" * 80)
+        print()
+
+        run_comprehensive_test(
+            mat_files,
+            output_base_dir='test_output_fourier',
+            fir_validation_mat=validation_mat,
+            freq_method='fourier'
+        )
+
+        print("\n" + "=" * 80)
+        print("PHASE 2 COMPLETED: Fourier tests finished")
+        print("=" * 80)
+        print()
+
+        print("=" * 80)
+        print("ALL COMPREHENSIVE TESTS COMPLETED!")
+        print("=" * 80)
+        print()
+        print("Results saved to:")
+        print("  - FRF method (log-scale):    test_output_frf/")
+        print("  - Fourier method (normal):   test_output_fourier/")
+        print("=" * 80)
     else:
         # Run normal pipeline
         main()

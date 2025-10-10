@@ -23,3 +23,9 @@ test_rf_fir
 test_fir_quick
 test_ls_quick
 test_ls_output
+gp_output
+test_output_frf
+test_output_legacy
+test_output_paper
+test_output_paper_mode
+PAPER_MODE_IMPLEMENTATION.md
