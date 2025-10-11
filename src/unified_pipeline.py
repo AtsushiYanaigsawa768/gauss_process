@@ -1360,8 +1360,8 @@ def main():
                       help='Normalize inputs and outputs')
     parser.add_argument('--log-frequency', action='store_true',
                       help='Use log-frequency as GP input')
-    parser.add_argument('--optimize', action='store_true', default=True,
-                      help='Optimize hyperparameters (default: True)')
+    parser.add_argument('--optimize', action='store_true', default=False,
+                      help='Optimize hyperparameters (default: False)')
     parser.add_argument('--no-optimize', dest='optimize', action='store_false',
                       help='Disable hyperparameter optimization')
     parser.add_argument('--n-restarts', type=int, default=3,
@@ -1725,7 +1725,7 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 noise_variance=1e-6,
                                 normalize=True,
                                 log_frequency=True,
-                                optimize=True,
+                                optimize=False,
                                 n_restarts=3,
                                 out_dir=str(output_dir),
                                 extract_fir=True,
@@ -1859,7 +1859,7 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             noise_variance=1e-6,
                             normalize=True,
                             log_frequency=True,
-                            optimize=True,
+                            optimize=False,
                             n_restarts=3,
                             out_dir=str(output_dir),
                             extract_fir=True,
