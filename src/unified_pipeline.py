@@ -777,36 +777,8 @@ def run_fourier_transform(mat_files: List[str], output_dir: Path, n_files: int =
 def plot_gp_results(omega: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray,
                    y_std: Optional[np.ndarray], title: str, output_path: Path):
     """Plot GP regression results."""
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-
-    # Plot 1: True vs Predicted
-    ax1.semilogx(omega, y_true, 'k.', markersize=8, label='Measured', alpha=0.6)
-    ax1.semilogx(omega, y_pred, 'r-', linewidth=2, label='GP mean')
-
-    if y_std is not None:
-        ax1.fill_between(omega, y_pred - 2*y_std, y_pred + 2*y_std,
-                        alpha=0.3, color='red', label='95% confidence')
-
-    ax1.set_xlabel(r'$\omega$ [rad/s]')
-    ax1.set_ylabel(title)
-    ax1.set_title(f'GP Regression: {title}')
-    ax1.legend()
-    ax1.grid(True, which='both', alpha=0.3)
-
-    # Plot 2: Residuals
+    # Calculate metrics only (no plotting for real/imag separately)
     residuals = y_true - y_pred
-    ax2.semilogx(omega, residuals, 'b.', markersize=6, alpha=0.6)
-    ax2.axhline(0, color='k', linestyle='--', alpha=0.5)
-    ax2.set_xlabel(r'$\omega$ [rad/s]')
-    ax2.set_ylabel('Residual')
-    ax2.set_title('Prediction Residuals')
-    ax2.grid(True, which='both', alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
-    plt.close()
-
-    # Calculate metrics
     rmse = np.sqrt(np.mean(residuals**2))
     r2 = 1 - np.sum(residuals**2) / np.sum((y_true - np.mean(y_true))**2)
 
@@ -816,40 +788,9 @@ def plot_gp_results(omega: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray,
 def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
                    G_std_real: Optional[np.ndarray], G_std_imag: Optional[np.ndarray],
                    output_prefix: Path):
-    """Plot complex-valued GP results (magnitude/phase and Nyquist)."""
-    mag_true = np.abs(G_true)
-    mag_pred = np.abs(G_pred)
-    phase_true = np.angle(G_true)
-    phase_pred = np.angle(G_pred)
-
-    # Bode magnitude plot
-    fig1, ax = plt.subplots(figsize=(10, 6))
-    ax.loglog(omega, mag_true, 'k.', markersize=8, label='Measured', alpha=0.6)
-    ax.loglog(omega, mag_pred, 'r-', linewidth=2, label='GP mean')
-    ax.set_xlabel(r'$\omega$ [rad/s]')
-    ax.set_ylabel('|G(jω)|')
-    ax.set_title('Bode Magnitude Plot')
-    ax.legend()
-    ax.grid(True, which='both', alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(str(output_prefix) + '_bode_mag_gp.png', dpi=300)
-    plt.close()
-
-    # Bode phase plot
-    fig2, ax = plt.subplots(figsize=(10, 6))
-    ax.semilogx(omega, np.unwrap(phase_true), 'k.', markersize=8, label='Measured', alpha=0.6)
-    ax.semilogx(omega, np.unwrap(phase_pred), 'r-', linewidth=2, label='GP mean')
-    ax.set_xlabel(r'$\omega$ [rad/s]')
-    ax.set_ylabel('Phase [rad]')
-    ax.set_title('Bode Phase Plot')
-    ax.legend()
-    ax.grid(True, which='both', alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(str(output_prefix) + '_bode_phase_gp.png', dpi=300)
-    plt.close()
-
-    # Nyquist plot
-    fig3, ax = plt.subplots(figsize=(8, 8))
+    """Plot complex-valued GP results (Nyquist only)."""
+    # Nyquist plot only
+    fig, ax = plt.subplots(figsize=(8, 8))
     ax.plot(np.real(G_true), np.imag(G_true), 'k.', markersize=8, label='Measured', alpha=0.6)
     ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=2, label='GP mean')
 
@@ -913,7 +854,7 @@ def run_gp_pipeline(config: argparse.Namespace):
             return_predictor=True
         )
 
-        # Save main results
+        # Store results internally (no JSON/CSV output as per user request)
         results['config'] = {
             'method': config.method,
             'normalize': config.normalize,
@@ -921,23 +862,7 @@ def run_gp_pipeline(config: argparse.Namespace):
             'time_duration': config.time_duration
         }
 
-        with open(output_dir / 'results.json', 'w') as f:
-            json.dump(results, f, indent=2)
-
-        print(f"{config.method.upper()} regression complete. Results saved to {output_dir}")
-
-        # Save smoothed FRF for downstream use
-        smoothed_df = pd.DataFrame({
-            'omega_rad_s': omega,
-            'freq_Hz': omega / (2 * np.pi),
-            'ReG': np.real(G_pred),
-            'ImG': np.imag(G_pred),
-            'absG': np.abs(G_pred),
-            'phase_rad': np.angle(G_pred)
-        })
-        smoothed_csv = output_dir / f'{config.method}_smoothed_frf.csv'
-        smoothed_df.to_csv(smoothed_csv, index=False)
-        print(f"{config.method.upper()}-smoothed FRF saved to {smoothed_csv}")
+        print(f"{config.method.upper()} regression complete.")
 
         # Continue to FIR extraction if requested
         if config.extract_fir:
@@ -974,21 +899,122 @@ def run_gp_pipeline(config: argparse.Namespace):
                     fir_length=config.fir_length
                 )
 
-                # Add FIR results to overall results
+                # Store FIR results internally
                 results['fir_extraction'] = fir_results
 
-                # Update saved results
-                with open(output_dir / 'results.json', 'w') as f:
-                    json.dump(results, f, indent=2)
+                print(f"FIR extraction complete.")
 
-                print(f"FIR extraction complete. Results saved to {fir_output_dir}")
+                # Additional evaluation with Wave.mat if it exists
+                wave_mat_path = Path('Wave.mat')
+                if wave_mat_path.exists() and validation_mat != wave_mat_path:
+                    print("\n" + "="*70)
+                    print("Additional FIR Evaluation with Wave.mat")
+                    print("="*70)
+
+                    try:
+                        # Load FIR coefficients from the previous extraction
+                        fir_coeffs_file = fir_output_dir / 'fir_coefficients_gp_paper.npz'
+                        if fir_coeffs_file.exists():
+                            fir_data = np.load(fir_coeffs_file)
+                            g = fir_data['g']
+                            N = len(g)
+
+                            # Load Wave.mat data
+                            from scipy.io import loadmat
+                            wave_data = loadmat(wave_mat_path)
+                            T = None
+                            y = None
+                            u = None
+
+                            # Try to extract [t, y, u] from Wave.mat
+                            for key, val in wave_data.items():
+                                if key.startswith("__") or not isinstance(val, np.ndarray):
+                                    continue
+                                if val.ndim == 2 and (val.shape[0] == 3 or val.shape[1] == 3):
+                                    if val.shape[0] == 3:
+                                        T = np.ravel(val[0, :]).astype(float)
+                                        y = np.ravel(val[1, :]).astype(float)
+                                        u = np.ravel(val[2, :]).astype(float)
+                                    else:
+                                        T = np.ravel(val[:, 0]).astype(float)
+                                        y = np.ravel(val[:, 1]).astype(float)
+                                        u = np.ravel(val[:, 2]).astype(float)
+                                    break
+
+                            if T is None:
+                                # Try named variables
+                                T = np.ravel(wave_data.get("t", wave_data.get("time"))).astype(float)
+                                y = np.ravel(wave_data.get("y"))
+                                u = np.ravel(wave_data.get("u"))
+
+                            if T is not None and y is not None and u is not None:
+                                # Strict evaluation mode (same as paper mode)
+                                DETREND = False
+                                if DETREND:
+                                    u_eval = u - np.mean(u)
+                                    y_eval = y - np.mean(y)
+                                else:
+                                    u_eval = u.copy()
+                                    y_eval = y.copy()
+
+                                # Predict with causal convolution
+                                y_pred = np.convolve(u_eval, g, mode="full")[:len(y_eval)]
+
+                                # Minimal transient skip
+                                skip = min(10, N // 10)
+                                y_valid = y_eval[skip:]
+                                y_pred_valid = y_pred[skip:]
+
+                                # Calculate metrics
+                                err = y_valid - y_pred_valid
+                                rmse = float(np.sqrt(np.mean(err**2)))
+
+                                norm_y = np.linalg.norm(y_valid)
+                                fit = float(100 * (1.0 - np.linalg.norm(err) / norm_y)) if norm_y > 0 else 0.0
+
+                                ss_res = float(np.sum(err**2))
+                                ss_tot = float(np.sum((y_valid - y_valid[0])**2))
+                                r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+                                wave_results = {
+                                    "validation_file": "Wave.mat",
+                                    "rmse": rmse,
+                                    "fit_percent": fit,
+                                    "r2": r2,
+                                    "transient_skip": skip,
+                                    "detrend": DETREND
+                                }
+
+                                # Add to overall results
+                                results['fir_extraction_wave'] = wave_results
+
+                                # Create visualization plots
+                                wave_output_dir = fir_output_dir / 'wave_validation'
+                                wave_output_dir.mkdir(parents=True, exist_ok=True)
+                                from gp_to_fir_direct_fixed import plot_gp_fir_results_fixed
+                                plot_gp_fir_results_fixed(
+                                    t=T, y=y, y_pred=y_pred, u=u,
+                                    rmse=rmse, fit_percent=fit, r2=r2,
+                                    output_dir=wave_output_dir,
+                                    prefix=f"{config.method}_fir_wave"
+                                )
+
+                                print(f"  Wave.mat Validation: RMSE={rmse:.3e}, FIT={fit:.1f}%, R²={r2:.3f}")
+                                print(f"  Results saved to {wave_output_dir}")
+                            else:
+                                print("  Warning: Could not load time-series data from Wave.mat")
+                        else:
+                            print("  Warning: FIR coefficients file not found")
+
+                    except Exception as e:
+                        print(f"  Error during Wave.mat evaluation: {str(e)}")
 
             except ImportError:
                 print("Warning: gp_to_fir_direct_fixed module is not available")
             except Exception as e:
                 print(f"Error during FIR extraction: {str(e)}")
 
-        return
+        return results
 
     # Prepare data for GP
     X = omega.reshape(-1, 1)
@@ -1146,7 +1172,7 @@ def run_gp_pipeline(config: argparse.Namespace):
             'noise_phase': float(gp_phase.noise_variance)
         }
 
-    # Save results summary
+    # Store results summary internally (no JSON output as per user request)
     results['config'] = {
         'kernel': config.kernel,
         'gp_mode': config.gp_mode,
@@ -1155,34 +1181,10 @@ def run_gp_pipeline(config: argparse.Namespace):
         'optimize': config.optimize,
     }
 
-    with open(output_dir / 'gp_results.json', 'w') as f:
-        json.dump(results, f, indent=2)
+    print(f"GP regression complete. Output saved to {output_dir}")
 
-    print(f"GP regression complete. Results saved to {output_dir}")
-
-    # Save GP-smoothed FRF for downstream use (e.g., FIR identification)
-    if config.gp_mode == 'separate':
-        smoothed_df = pd.DataFrame({
-            'omega_rad_s': omega,
-            'freq_Hz': omega / (2 * np.pi),
-            'ReG': y_real_pred,
-            'ImG': y_imag_pred,
-            'absG': np.abs(y_real_pred + 1j * y_imag_pred),
-            'phase_rad': np.angle(y_real_pred + 1j * y_imag_pred)
-        })
-    else:  # polar mode
-        smoothed_df = pd.DataFrame({
-            'omega_rad_s': omega,
-            'freq_Hz': omega / (2 * np.pi),
-            'ReG': np.real(G_pred),
-            'ImG': np.imag(G_pred),
-            'absG': mag_pred,
-            'phase_rad': y_phase_pred
-        })
-
-    smoothed_csv = output_dir / 'gp_smoothed_frf.csv'
-    smoothed_df.to_csv(smoothed_csv, index=False)
-    print(f"GP-smoothed FRF saved to {smoothed_csv}")
+    # GP-smoothed FRF available in memory for downstream use (e.g., FIR identification)
+    # No CSV output as per user request
 
     # Step 4: FIR model extraction (if requested)
     if config.extract_fir:
@@ -1276,11 +1278,112 @@ def run_gp_pipeline(config: argparse.Namespace):
             # Add FIR results to overall results
             results['fir_extraction'] = fir_results
 
-            # Update saved results
-            with open(output_dir / 'gp_results.json', 'w') as f:
-                json.dump(results, f, indent=2)
-
             print(f"FIR extraction complete. Results saved to {fir_output_dir}")
+
+            # Additional evaluation with Wave.mat if it exists
+            wave_mat_path = Path('Wave.mat')
+            if wave_mat_path.exists() and validation_mat != wave_mat_path:
+                print("\n" + "="*70)
+                print("Additional FIR Evaluation with Wave.mat")
+                print("="*70)
+
+                try:
+                    # Load FIR coefficients from the previous extraction
+                    fir_coeffs_file = fir_output_dir / 'fir_coefficients_gp_paper.npz'
+                    if fir_coeffs_file.exists():
+                        fir_data = np.load(fir_coeffs_file)
+                        g = fir_data['g']
+                        N = len(g)
+
+                        # Load Wave.mat data
+                        from scipy.io import loadmat
+                        wave_data = loadmat(wave_mat_path)
+                        T = None
+                        y = None
+                        u = None
+
+                        # Try to extract [t, y, u] from Wave.mat
+                        for key, val in wave_data.items():
+                            if key.startswith("__") or not isinstance(val, np.ndarray):
+                                continue
+                            if val.ndim == 2 and (val.shape[0] == 3 or val.shape[1] == 3):
+                                if val.shape[0] == 3:
+                                    T = np.ravel(val[0, :]).astype(float)
+                                    y = np.ravel(val[1, :]).astype(float)
+                                    u = np.ravel(val[2, :]).astype(float)
+                                else:
+                                    T = np.ravel(val[:, 0]).astype(float)
+                                    y = np.ravel(val[:, 1]).astype(float)
+                                    u = np.ravel(val[:, 2]).astype(float)
+                                break
+
+                        if T is None:
+                            # Try named variables
+                            T = np.ravel(wave_data.get("t", wave_data.get("time"))).astype(float)
+                            y = np.ravel(wave_data.get("y"))
+                            u = np.ravel(wave_data.get("u"))
+
+                        if T is not None and y is not None and u is not None:
+                            # Strict evaluation mode (same as paper mode)
+                            DETREND = False
+                            if DETREND:
+                                u_eval = u - np.mean(u)
+                                y_eval = y - np.mean(y)
+                            else:
+                                u_eval = u.copy()
+                                y_eval = y.copy()
+
+                            # Predict with causal convolution
+                            y_pred = np.convolve(u_eval, g, mode="full")[:len(y_eval)]
+
+                            # Minimal transient skip
+                            skip = min(10, N // 10)
+                            y_valid = y_eval[skip:]
+                            y_pred_valid = y_pred[skip:]
+
+                            # Calculate metrics
+                            err = y_valid - y_pred_valid
+                            rmse = float(np.sqrt(np.mean(err**2)))
+
+                            norm_y = np.linalg.norm(y_valid)
+                            fit = float(100 * (1.0 - np.linalg.norm(err) / norm_y)) if norm_y > 0 else 0.0
+
+                            ss_res = float(np.sum(err**2))
+                            ss_tot = float(np.sum((y_valid - y_valid[0])**2))
+                            r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+                            wave_results = {
+                                "validation_file": "Wave.mat",
+                                "rmse": rmse,
+                                "fit_percent": fit,
+                                "r2": r2,
+                                "transient_skip": skip,
+                                "detrend": DETREND
+                            }
+
+                            # Add to overall results
+                            results['fir_extraction_wave'] = wave_results
+
+                            # Create visualization plots
+                            wave_output_dir = fir_output_dir / 'wave_validation'
+                            wave_output_dir.mkdir(parents=True, exist_ok=True)
+                            from gp_to_fir_direct_fixed import plot_gp_fir_results_fixed
+                            plot_gp_fir_results_fixed(
+                                t=T, y=y, y_pred=y_pred, u=u,
+                                rmse=rmse, fit_percent=fit, r2=r2,
+                                output_dir=wave_output_dir,
+                                prefix="gp_fir_wave"
+                            )
+
+                            print(f"  Wave.mat Validation: RMSE={rmse:.3e}, FIT={fit:.1f}%, R²={r2:.3f}")
+                            print(f"  Results saved to {wave_output_dir}")
+                        else:
+                            print("  Warning: Could not load time-series data from Wave.mat")
+                    else:
+                        print("  Warning: FIR coefficients file not found")
+
+                except Exception as e:
+                    print(f"  Error during Wave.mat evaluation: {str(e)}")
 
         except ImportError:
             # Fall back to regular version
@@ -1300,10 +1403,6 @@ def run_gp_pipeline(config: argparse.Namespace):
                 # Add FIR results to overall results
                 results['fir_extraction'] = fir_results
 
-                # Update saved results
-                with open(output_dir / 'gp_results.json', 'w') as f:
-                    json.dump(results, f, indent=2)
-
                 print(f"FIR extraction complete. Results saved to {fir_output_dir}")
 
             except ImportError:
@@ -1313,6 +1412,8 @@ def run_gp_pipeline(config: argparse.Namespace):
 
         except Exception as e:
             print(f"Error during FIR extraction: {str(e)}")
+
+    return results
 
 
 def main():
@@ -1508,46 +1609,21 @@ def run_unified_system_identification(omega: np.ndarray, G_complex: np.ndarray,
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save predictions
-        pred_df = pd.DataFrame({
-            'omega_rad_s': omega,
-            'ReG_true': np.real(G_complex),
-            'ImG_true': np.imag(G_complex),
-            'ReG_pred': np.real(G_pred),
-            'ImG_pred': np.imag(G_pred),
-            'absG_true': np.abs(G_complex),
-            'absG_pred': np.abs(G_pred),
-            'phase_true': np.angle(G_complex),
-            'phase_pred': np.angle(G_pred),
-        })
-        pred_df.to_csv(output_dir / f'{method}_predictions.csv', index=False)
-
-        # Simple comparison plot
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-
-        ax1.loglog(omega, np.abs(G_complex), 'k.', label='Measured', alpha=0.6)
-        ax1.loglog(omega, np.abs(G_pred), 'r-', label=f'{method.upper()} fit', linewidth=2)
-        ax1.set_xlabel(r'$\omega$ [rad/s]')
-        ax1.set_ylabel('|G(jω)|')
-        ax1.set_title(f'Magnitude - {method.upper()} (RMSE={rmse:.3e})')
-        ax1.legend()
-        ax1.grid(True, which='both', alpha=0.3)
-
-        ax2.semilogx(omega, np.unwrap(np.angle(G_complex)), 'k.', label='Measured', alpha=0.6)
-        ax2.semilogx(omega, np.unwrap(np.angle(G_pred)), 'r-', label=f'{method.upper()} fit', linewidth=2)
-        ax2.set_xlabel(r'$\omega$ [rad/s]')
-        ax2.set_ylabel('Phase [rad]')
-        ax2.set_title(f'Phase - {method.upper()}')
-        ax2.legend()
-        ax2.grid(True, which='both', alpha=0.3)
-
+        # Nyquist plot only (as per user request - no Bode, no real/imag plots)
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.plot(np.real(G_complex), np.imag(G_complex), 'k.', markersize=8, label='Measured', alpha=0.6)
+        ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=2, label=f'{method.upper()} fit')
+        ax.set_xlabel('Real{G(jω)}')
+        ax.set_ylabel('Imag{G(jω)}')
+        ax.set_title(f'Nyquist Plot - {method.upper()} (RMSE={rmse:.3e})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.axis('equal')
         plt.tight_layout()
-        plt.savefig(output_dir / f'{method}_bode.png', dpi=300)
+        plt.savefig(output_dir / f'{method}_complex_nyquist.png', dpi=300)
         plt.close()
 
-        # Save results
-        with open(output_dir / f'{method}_results.json', 'w') as f:
-            json.dump(results, f, indent=2)
+        # Results stored internally (no JSON/CSV output as per user request)
 
     if return_predictor:
         return results, G_pred, estimator
@@ -1568,12 +1644,10 @@ def save_results_to_csv(result_entry: Dict, output_base_dir: Path, timestamp: st
     base_path = Path(output_base_dir) / timestamp
     base_path.mkdir(parents=True, exist_ok=True)
 
-    # Define CSV columns
+    # Define CSV columns (simplified as per user request)
     fieldnames = [
-        'test_name', 'kernel', 'n_files', 'time_duration', 'nd',
-        'gp_rmse_real', 'gp_rmse_imag', 'gp_r2_real', 'gp_r2_imag',
-        'fir_rmse', 'fir_r2', 'fir_fit_percent',
-        'status', 'error_message'
+        'method', 'n_files', 'time_duration', 'nd', 'freq_method',
+        'fir_rmse', 'fir_wave_rmse'
     ]
 
     # 1. Save to overall results CSV
@@ -1587,7 +1661,7 @@ def save_results_to_csv(result_entry: Dict, output_base_dir: Path, timestamp: st
         writer.writerow(result_entry)
 
     # 2. Save to method-specific CSV
-    method_name = result_entry.get('test_name', '').split('_nd')[0]  # Extract method name
+    method_name = result_entry.get('method', '')
     if method_name:
         method_csv = base_path / f'results_by_method_{method_name}.csv'
         file_exists = method_csv.exists()
@@ -1737,20 +1811,11 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 freq_method=freq_method  # Frequency analysis method
                             )
 
-                            # Run the pipeline
-                            run_gp_pipeline(config)
+                            # Run the pipeline and get results directly
+                            results = run_gp_pipeline(config)
 
-                            # Extract results
-                            if is_gp:
-                                results_file = output_dir / 'gp_results.json'
-                            else:
-                                results_file = output_dir / 'results.json'
-
-                            if results_file.exists():
-                                with open(results_file, 'r') as f:
-                                    results = json.load(f)
-
-                                # Extract metrics
+                            # Extract metrics
+                            if results:
                                 if is_gp:
                                     rmse_real = results.get('real', {}).get('rmse', None)
                                     rmse_imag = results.get('imag', {}).get('rmse', None)
@@ -1772,22 +1837,24 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                     fir_r2 = results['fir_extraction'].get('r2', None)
                                     fir_fit = results['fir_extraction'].get('fit_percent', None)
 
-                                # Store result
+                                # Wave.mat validation results if available
+                                fir_wave_rmse = None
+                                fir_wave_r2 = None
+                                fir_wave_fit = None
+                                if 'fir_extraction_wave' in results:
+                                    fir_wave_rmse = results['fir_extraction_wave'].get('rmse', None)
+                                    fir_wave_r2 = results['fir_extraction_wave'].get('r2', None)
+                                    fir_wave_fit = results['fir_extraction_wave'].get('fit_percent', None)
+
+                                # Store result (simplified)
                                 result_entry = {
-                                    'test_name': test_name,
-                                    'kernel': kernel,
+                                    'method': method,
                                     'n_files': 1,
                                     'time_duration': time_duration,
                                     'nd': nd,
-                                    'gp_rmse_real': rmse_real,
-                                    'gp_rmse_imag': rmse_imag,
-                                    'gp_r2_real': r2_real,
-                                    'gp_r2_imag': r2_imag,
+                                    'freq_method': freq_method,
                                     'fir_rmse': fir_rmse,
-                                    'fir_r2': fir_r2,
-                                    'fir_fit_percent': fir_fit,
-                                    'status': 'success',
-                                    'error_message': ''
+                                    'fir_wave_rmse': fir_wave_rmse
                                 }
                                 all_results.append(result_entry)
 
@@ -1797,16 +1864,18 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 print(f"  ✓ Success - GP RMSE Real: {rmse_real:.3e}, Imag: {rmse_imag:.3e}")
                                 if fir_rmse:
                                     print(f"            FIR RMSE: {fir_rmse:.3e}, FIT: {fir_fit:.1f}%")
+                                if fir_wave_rmse:
+                                    print(f"            FIR Wave RMSE: {fir_wave_rmse:.3e}, FIT: {fir_wave_fit:.1f}%")
                             else:
-                                print(f"  ✗ Results file not found")
+                                print(f"  ✗ No results returned")
                                 result_entry = {
-                                    'test_name': test_name,
-                                    'kernel': kernel,
+                                    'method': method,
                                     'n_files': 1,
                                     'time_duration': time_duration,
                                     'nd': nd,
-                                    'status': 'no_results_file',
-                                    'error_message': 'Results file not found'
+                                    'freq_method': freq_method,
+                                    'fir_rmse': None,
+                                    'fir_wave_rmse': None
                                 }
                                 all_results.append(result_entry)
 
@@ -1816,13 +1885,13 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                         except Exception as e:
                             print(f"  ✗ Error: {str(e)}")
                             result_entry = {
-                                'test_name': test_name,
-                                'kernel': kernel,
+                                'method': method,
                                 'n_files': 1,
                                 'time_duration': time_duration,
                                 'nd': nd,
-                                'status': 'error',
-                                'error_message': str(e)
+                                'freq_method': freq_method,
+                                'fir_rmse': None,
+                                'fir_wave_rmse': None
                             }
                             all_results.append(result_entry)
 
@@ -1871,20 +1940,11 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             freq_method=freq_method
                         )
 
-                        # Run the pipeline
-                        run_gp_pipeline(config)
+                        # Run the pipeline and get results directly
+                        results = run_gp_pipeline(config)
 
-                        # Extract results
-                        if is_gp:
-                            results_file = output_dir / 'gp_results.json'
-                        else:
-                            results_file = output_dir / 'results.json'
-
-                        if results_file.exists():
-                            with open(results_file, 'r') as f:
-                                results = json.load(f)
-
-                            # Extract metrics
+                        # Extract metrics
+                        if results:
                             if is_gp:
                                 rmse_real = results.get('real', {}).get('rmse', None)
                                 rmse_imag = results.get('imag', {}).get('rmse', None)
@@ -1905,22 +1965,24 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 fir_r2 = results['fir_extraction'].get('r2', None)
                                 fir_fit = results['fir_extraction'].get('fit_percent', None)
 
-                            # Store result
+                            # Wave.mat validation results if available
+                            fir_wave_rmse = None
+                            fir_wave_r2 = None
+                            fir_wave_fit = None
+                            if 'fir_extraction_wave' in results:
+                                fir_wave_rmse = results['fir_extraction_wave'].get('rmse', None)
+                                fir_wave_r2 = results['fir_extraction_wave'].get('r2', None)
+                                fir_wave_fit = results['fir_extraction_wave'].get('fit_percent', None)
+
+                            # Store result (simplified)
                             result_entry = {
-                                'test_name': test_name,
-                                'kernel': kernel,
+                                'method': method,
                                 'n_files': actual_n_files,
                                 'time_duration': None,
                                 'nd': nd,
-                                'gp_rmse_real': rmse_real,
-                                'gp_rmse_imag': rmse_imag,
-                                'gp_r2_real': r2_real,
-                                'gp_r2_imag': r2_imag,
+                                'freq_method': freq_method,
                                 'fir_rmse': fir_rmse,
-                                'fir_r2': fir_r2,
-                                'fir_fit_percent': fir_fit,
-                                'status': 'success',
-                                'error_message': ''
+                                'fir_wave_rmse': fir_wave_rmse
                             }
                             all_results.append(result_entry)
 
@@ -1930,16 +1992,18 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             print(f"  ✓ Success - GP RMSE Real: {rmse_real:.3e}, Imag: {rmse_imag:.3e}")
                             if fir_rmse:
                                 print(f"            FIR RMSE: {fir_rmse:.3e}, FIT: {fir_fit:.1f}%")
+                            if fir_wave_rmse:
+                                print(f"            FIR Wave RMSE: {fir_wave_rmse:.3e}, FIT: {fir_wave_fit:.1f}%")
                         else:
-                            print(f"  ✗ Results file not found")
+                            print(f"  ✗ No results returned")
                             result_entry = {
-                                'test_name': test_name,
-                                'kernel': kernel,
+                                'method': method,
                                 'n_files': actual_n_files,
                                 'time_duration': None,
                                 'nd': nd,
-                                'status': 'no_results_file',
-                                'error_message': 'Results file not found'
+                                'freq_method': freq_method,
+                                'fir_rmse': None,
+                                'fir_wave_rmse': None
                             }
                             all_results.append(result_entry)
 
@@ -1949,13 +2013,13 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                     except Exception as e:
                         print(f"  ✗ Error: {str(e)}")
                         result_entry = {
-                            'test_name': test_name,
-                            'kernel': kernel,
+                            'method': method,
                             'n_files': actual_n_files,
                             'time_duration': None,
                             'nd': nd,
-                            'status': 'error',
-                            'error_message': str(e)
+                            'freq_method': freq_method,
+                            'fir_rmse': None,
+                            'fir_wave_rmse': None
                         }
                         all_results.append(result_entry)
 
@@ -1970,8 +2034,8 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     print("\n" + "=" * 80)
     print(f"Comprehensive testing complete!")
     print(f"Total tests run: {total_tests}")
-    print(f"Successful tests: {sum(1 for r in all_results if r.get('status') == 'success')}")
-    print(f"Failed tests: {sum(1 for r in all_results if r.get('status') != 'success')}")
+    print(f"Successful tests: {sum(1 for r in all_results if r.get('fir_rmse') is not None)}")
+    print(f"Failed tests: {sum(1 for r in all_results if r.get('fir_rmse') is None)}")
     print(f"\nResults saved incrementally to:")
     print(f"  - Overall: {csv_file}")
     print(f"  - By method: {csv_file.parent}/results_by_method_*.csv")
@@ -1985,15 +2049,20 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
         f.write("=" * 60 + "\n")
         f.write(f"Test Date: {timestamp}\n")
         f.write(f"Total Tests: {total_tests}\n")
-        f.write(f"Successful Tests: {sum(1 for r in all_results if r.get('status') == 'success')}\n")
-        f.write(f"Failed Tests: {sum(1 for r in all_results if r.get('status') != 'success')}\n")
+        f.write(f"Successful Tests: {sum(1 for r in all_results if r.get('fir_rmse') is not None)}\n")
+        f.write(f"Failed Tests: {sum(1 for r in all_results if r.get('fir_rmse') is None)}\n")
         f.write("\n")
 
-        # Find best performing kernel based on FIR RMSE
+        # Find best performing method based on FIR RMSE
         best_results = []
         for result in all_results:
-            if result.get('status') == 'success' and result.get('fir_rmse') is not None:
-                best_results.append((result['kernel'], result['fir_rmse'], result['test_name']))
+            if result.get('fir_rmse') is not None:
+                method = result.get('method', 'unknown')
+                nd = result.get('nd', 0)
+                n_files = result.get('n_files', 0)
+                time_dur = result.get('time_duration', 'full')
+                config_name = f"{method}_nd{nd}_{n_files}files_{time_dur}"
+                best_results.append((method, result['fir_rmse'], config_name))
 
         if best_results:
             best_results.sort(key=lambda x: x[1])

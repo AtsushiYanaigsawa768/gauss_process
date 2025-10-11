@@ -218,7 +218,7 @@ def plot_gp_fir_results_fixed(t: np.ndarray, y: np.ndarray,
     fig1, ax1 = plt.subplots(figsize=(10, 6))
 
     # Show full time range or limit to reasonable duration
-    t_max = min(t[-1], t[0] + 200)  # Show first 200 seconds
+    t_max = min(t[-1], t[0] + 10)  # Show first 10 seconds
     mask = t <= t_max
 
     ax1.plot(t[mask], y[mask], 'k-', label='Measured Output', linewidth=1.5, alpha=0.8)
