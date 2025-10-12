@@ -29,3 +29,4 @@ test_output_legacy
 test_output_paper
 test_output_paper_mode
 PAPER_MODE_IMPLEMENTATION.md
+test_output_fourier

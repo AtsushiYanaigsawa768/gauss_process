@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import gc
 import glob
 import json
 import subprocess
@@ -36,6 +37,8 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for memory efficiency
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from scipy.optimize import minimize
@@ -811,8 +814,8 @@ def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
     ax.grid(True, alpha=0.3)
     ax.axis('equal')
     plt.tight_layout()
-    plt.savefig(str(output_prefix) + '_nyquist_gp.png', dpi=300)
-    plt.close()
+    plt.savefig(str(output_prefix) + '_nyquist_gp.png', dpi=150)
+    plt.close(fig)
 
 
 # =====================
@@ -877,6 +880,8 @@ def run_gp_pipeline(config: argparse.Namespace):
                 if not validation_mat.exists():
                     print(f"Warning: Validation MAT file not found: {validation_mat}")
                     validation_mat = None
+                else:
+                    print(f"  FIR validation file: {validation_mat}")
 
             # Create a prediction function for the estimator
             def estimator_predict_at_omega(omega_new):
@@ -888,7 +893,7 @@ def run_gp_pipeline(config: argparse.Namespace):
                 # Try to use the fixed version first
                 from gp_to_fir_direct_fixed import gp_to_fir_direct_pipeline as gp_to_fir_direct_pipeline_fixed
                 print(f"Using GP-based FIR extraction for {config.method.upper()} model...")
-                fir_output_dir = output_dir / f'fir_{config.method}'
+                fir_output_dir = output_dir  # Output directly to main directory
                 fir_results = gp_to_fir_direct_pipeline_fixed(
                     omega=omega,
                     G=G_pred,
@@ -909,14 +914,13 @@ def run_gp_pipeline(config: argparse.Namespace):
                 if wave_mat_path.exists() and validation_mat != wave_mat_path:
                     print("\n" + "="*70)
                     print("Additional FIR Evaluation with Wave.mat")
+                    print(f"  Using: {wave_mat_path.absolute()}")
                     print("="*70)
 
                     try:
-                        # Load FIR coefficients from the previous extraction
-                        fir_coeffs_file = fir_output_dir / 'fir_coefficients_gp_paper.npz'
-                        if fir_coeffs_file.exists():
-                            fir_data = np.load(fir_coeffs_file)
-                            g = fir_data['g']
+                        # Extract FIR coefficients from results (passed in memory)
+                        if 'fir_coefficients' in fir_results:
+                            g = fir_results['fir_coefficients']
                             N = len(g)
 
                             # Load Wave.mat data
@@ -988,23 +992,21 @@ def run_gp_pipeline(config: argparse.Namespace):
                                 # Add to overall results
                                 results['fir_extraction_wave'] = wave_results
 
-                                # Create visualization plots
-                                wave_output_dir = fir_output_dir / 'wave_validation'
-                                wave_output_dir.mkdir(parents=True, exist_ok=True)
+                                # Create visualization plots in same directory
                                 from gp_to_fir_direct_fixed import plot_gp_fir_results_fixed
                                 plot_gp_fir_results_fixed(
                                     t=T, y=y, y_pred=y_pred, u=u,
                                     rmse=rmse, fit_percent=fit, r2=r2,
-                                    output_dir=wave_output_dir,
+                                    output_dir=output_dir,
                                     prefix=f"{config.method}_fir_wave"
                                 )
 
                                 print(f"  Wave.mat Validation: RMSE={rmse:.3e}, FIT={fit:.1f}%, R²={r2:.3f}")
-                                print(f"  Results saved to {wave_output_dir}")
+                                print(f"  Results saved to {output_dir}")
                             else:
                                 print("  Warning: Could not load time-series data from Wave.mat")
                         else:
-                            print("  Warning: FIR coefficients file not found")
+                            print("  Warning: FIR coefficients not found in results")
 
                     except Exception as e:
                         print(f"  Error during Wave.mat evaluation: {str(e)}")
@@ -1205,6 +1207,8 @@ def run_gp_pipeline(config: argparse.Namespace):
             if not validation_mat.exists():
                 print(f"Warning: Validation MAT file not found: {validation_mat}")
                 validation_mat = None
+            else:
+                print(f"  FIR validation file: {validation_mat}")
 
         # Create a GP prediction function for better interpolation
         def gp_predict_at_omega(omega_new):
@@ -1264,7 +1268,7 @@ def run_gp_pipeline(config: argparse.Namespace):
             # Try to use the fixed version first
             from gp_to_fir_direct_fixed import gp_to_fir_direct_pipeline as gp_to_fir_direct_pipeline_fixed
             print("Using *fixed* GP-based FIR extraction (ω→Ω mapping).")
-            fir_output_dir = output_dir / 'fir_gp'
+            fir_output_dir = output_dir  # Output directly to main directory
             fir_results = gp_to_fir_direct_pipeline_fixed(
                 omega=omega,
                 G=G_smoothed,
@@ -1285,14 +1289,13 @@ def run_gp_pipeline(config: argparse.Namespace):
             if wave_mat_path.exists() and validation_mat != wave_mat_path:
                 print("\n" + "="*70)
                 print("Additional FIR Evaluation with Wave.mat")
+                print(f"  Using: {wave_mat_path.absolute()}")
                 print("="*70)
 
                 try:
-                    # Load FIR coefficients from the previous extraction
-                    fir_coeffs_file = fir_output_dir / 'fir_coefficients_gp_paper.npz'
-                    if fir_coeffs_file.exists():
-                        fir_data = np.load(fir_coeffs_file)
-                        g = fir_data['g']
+                    # Extract FIR coefficients from results (passed in memory)
+                    if 'fir_coefficients' in fir_results:
+                        g = fir_results['fir_coefficients']
                         N = len(g)
 
                         # Load Wave.mat data
@@ -1364,23 +1367,21 @@ def run_gp_pipeline(config: argparse.Namespace):
                             # Add to overall results
                             results['fir_extraction_wave'] = wave_results
 
-                            # Create visualization plots
-                            wave_output_dir = fir_output_dir / 'wave_validation'
-                            wave_output_dir.mkdir(parents=True, exist_ok=True)
+                            # Create visualization plots in same directory
                             from gp_to_fir_direct_fixed import plot_gp_fir_results_fixed
                             plot_gp_fir_results_fixed(
                                 t=T, y=y, y_pred=y_pred, u=u,
                                 rmse=rmse, fit_percent=fit, r2=r2,
-                                output_dir=wave_output_dir,
+                                output_dir=output_dir,
                                 prefix="gp_fir_wave"
                             )
 
                             print(f"  Wave.mat Validation: RMSE={rmse:.3e}, FIT={fit:.1f}%, R²={r2:.3f}")
-                            print(f"  Results saved to {wave_output_dir}")
+                            print(f"  Results saved to {output_dir}")
                         else:
                             print("  Warning: Could not load time-series data from Wave.mat")
                     else:
-                        print("  Warning: FIR coefficients file not found")
+                        print("  Warning: FIR coefficients not found in results")
 
                 except Exception as e:
                     print(f"  Error during Wave.mat evaluation: {str(e)}")
@@ -1390,7 +1391,7 @@ def run_gp_pipeline(config: argparse.Namespace):
             try:
                 from gp_to_fir_direct import gp_to_fir_direct_pipeline
                 print("Using standard GP-based interpolation for FIR extraction...")
-                fir_output_dir = output_dir / 'fir_gp'
+                fir_output_dir = output_dir  # Output directly to main directory
                 fir_results = gp_to_fir_direct_pipeline(
                     omega=omega,
                     G=G_smoothed,
@@ -1412,6 +1413,10 @@ def run_gp_pipeline(config: argparse.Namespace):
 
         except Exception as e:
             print(f"Error during FIR extraction: {str(e)}")
+
+    # Clean up matplotlib resources before returning
+    plt.close('all')
+    gc.collect()
 
     return results
 
@@ -1737,7 +1742,7 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     print(f"MAT files (sorted for consistency):")
     for i, f in enumerate(mat_files, 1):
         print(f"  [{i}] {f}")
-    # print(f"GP Kernels: {', '.join(kernels)}")
+    print(f"GP Kernels: {', '.join(kernels)}")
     print(f"Classical methods: {', '.join(classical_methods)}")
     print(f"ML methods: {', '.join(ml_methods)}")
     print(f"Time durations: {time_durations}")
@@ -1782,7 +1787,8 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
                         print(f"\nTest: {test_name}")
                         print(f"  Method: {method}")
-                        print(f"  Files: 1 -> Using: {mat_files[0]}")
+                        print(f"  Input data: {mat_files[0]}")
+                        print(f"  FIR validation: {fir_validation_mat}")
                         print(f"  Duration: {time_str}")
                         print(f"  nd: {nd}")
 
@@ -1898,6 +1904,10 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             # Save error to CSV files immediately
                             save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
+                        # Clean up matplotlib resources after each test
+                        plt.close('all')
+                        gc.collect()
+
                         total_tests += 1
 
                 # For n_files > 1, use all time from each file
@@ -1910,9 +1920,10 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
                     print(f"\nTest: {test_name}")
                     print(f"  Method: {method}")
-                    print(f"  Files: {actual_n_files} -> Using:")
+                    print(f"  Input data ({actual_n_files} files):")
                     for i, f in enumerate(files_to_use, 1):
                         print(f"    [{i}] {f}")
+                    print(f"  FIR validation: {fir_validation_mat}")
                     print(f"  nd: {nd}")
 
                     try:
@@ -2026,7 +2037,11 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                         # Save error to CSV files immediately
                         save_results_to_csv(result_entry, Path(output_base_dir), timestamp)
 
-                        total_tests += 1
+                    # Clean up matplotlib resources after each test
+                    plt.close('all')
+                    gc.collect()
+
+                    total_tests += 1
 
     # CSV files are saved incrementally after each test (no need for final save)
     csv_file = Path(output_base_dir) / timestamp / 'overall_results.csv'
@@ -2127,7 +2142,8 @@ if __name__ == "__main__":
             print(f"  [{i}] {f}")
         print()
 
-        # Find validation MAT file
+        # Find validation MAT file for FIR model evaluation
+        # This file will be used consistently across ALL tests for fair comparison
         validation_mat = None
         for f in mat_files:
             if 'test' in f.lower():
@@ -2137,9 +2153,11 @@ if __name__ == "__main__":
         if not validation_mat:
             # Use first file as validation if no test file found
             validation_mat = mat_files[0]
-            print(f"Warning: No test file found, using {validation_mat} for validation")
+            print(f"⚠️  Warning: No test file found, using {validation_mat} for FIR validation")
         else:
-            print(f"Using validation file: {validation_mat}")
+            print(f"✓ Using validation file for FIR evaluation: {validation_mat}")
+
+        print(f"ℹ️  NOTE: This validation file will be used consistently for ALL tests")
         print()
 
         # Run comprehensive test with BOTH frequency methods

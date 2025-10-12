@@ -276,7 +276,7 @@ def save_plots(prefix: Path, w: np.ndarray, G: np.ndarray) -> None:
     ax1.set_title("Bode Gain plot")
     ax1.grid(True, which="both")
     fig1.tight_layout()
-    fig1.savefig(base + "_bode_mag.png", dpi=200)
+    fig1.savefig(base + "_bode_mag.png", dpi=150)
     plt.close(fig1)
 
     fig2, ax2 = plt.subplots()
@@ -286,7 +286,7 @@ def save_plots(prefix: Path, w: np.ndarray, G: np.ndarray) -> None:
     ax2.set_title("Nyquist Plot")
     ax2.grid(True)
     fig2.tight_layout()
-    fig2.savefig(base + "_nyquist.png", dpi=200)
+    fig2.savefig(base + "_nyquist.png", dpi=150)
     plt.close(fig2)
 
     fig3, ax3 = plt.subplots()
@@ -296,7 +296,7 @@ def save_plots(prefix: Path, w: np.ndarray, G: np.ndarray) -> None:
     ax3.set_title("Bode Phase plot")
     ax3.grid(True, which="both")
     fig3.tight_layout()
-    fig3.savefig(base + "_bode_phase.png", dpi=200)
+    fig3.savefig(base + "_bode_phase.png", dpi=150)
     plt.close(fig3)
 
 

@@ -235,7 +235,7 @@ def plot_gp_fir_results_fixed(t: np.ndarray, y: np.ndarray,
     ax1.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(output_dir / f"{prefix}_output_vs_predicted.png", dpi=300)
+    plt.savefig(output_dir / f"{prefix}_output_vs_predicted.png", dpi=150)
     plt.close(fig1)
 
     # Figure 2: Error
@@ -257,7 +257,7 @@ def plot_gp_fir_results_fixed(t: np.ndarray, y: np.ndarray,
              bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8))
 
     plt.tight_layout()
-    plt.savefig(output_dir / f"{prefix}_error.png", dpi=300)
+    plt.savefig(output_dir / f"{prefix}_error.png", dpi=150)
     plt.close(fig2)
 
     # Figure 3: Frequency Response Comparison
@@ -338,18 +338,13 @@ def gp_to_fir_direct_pipeline(
         if max_imag_h > 1e-10:
             warnings.warn(f"Impulse response has significant imaginary part: {max_imag_h:.3e}")
 
-        # Save coefficients
-        np.savez(output_dir / "fir_coefficients_gp_paper.npz",
-                 g=g, fir_order=N, M_idft=M, Nd=Nd,
-                 omega_uni=omega_uni, G_uni=G_uni,
-                 omega_meas=omega, G_meas=G,
-                 h_full=h_full[:min(len(h_full), 4096)])  # Save truncated full response
-
+        # Return coefficients in memory (no .npz file)
         results = {
             "paper_mode": True,
             "Nd": int(Nd),
             "M_idft": int(M),
             "fir_order": int(N),
+            "fir_coefficients": g,  # Pass coefficients in memory
             "method": "gp_paper_mode",
             "omega_range": [float(omega_uni[0]), float(omega_uni[-1])],
             "rmse": None,
@@ -432,11 +427,7 @@ def gp_to_fir_direct_pipeline(
 
                 print(f"  Validation (STRICT): RMSE={rmse:.3e}, FIT={fit:.1f}%, R²={r2:.3f}")
 
-                # Save validation data
-                np.savez(output_dir / "validation_preview_paper.npz",
-                         t=T, y=y, y_pred=y_pred, u=u)
-
-                # Create visualization plots
+                # Create visualization plots (no .npz file)
                 plot_gp_fir_results_fixed(
                     t=T, y=y, y_pred=y_pred, u=u,
                     rmse=rmse, fit_percent=fit, r2=r2,
@@ -449,34 +440,8 @@ def gp_to_fir_direct_pipeline(
             print("  No validation MAT file provided")
             results["Ts"] = None
 
-            # Create summary figure without validation
-            fig, ax = plt.subplots(figsize=(8, 6))
-            ax.axis('off')
-
-            info_text = f"""FIR Model Extraction Complete (Paper Mode)
-====================================================
-Method: Paper-based (uniform ω + two-sided Hermitian + IDFT)
-Nd: {Nd} frequency points
-M (IDFT length): {M} (odd)
-FIR Order N: {N} taps
-Frequency Range: {omega_uni[0]:.2f} - {omega_uni[-1]:.2f} rad/s
-
-No validation data provided.
-To validate, specify --fir-validation-mat
-"""
-            ax.text(0.5, 0.5, info_text, fontsize=12, family='monospace',
-                    ha='center', va='center',
-                    bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8))
-
-            plt.tight_layout()
-            plt.savefig(output_dir / "gp_fir_paper_summary.png", dpi=300)
-            plt.close()
-
-        # Save results JSON
-        with open(output_dir / "fir_gp_paper_results.json", "w") as f:
-            json.dump(results, f, indent=2)
-
-        print(f"[Paper Mode] Results saved to {output_dir}")
+        # Return results (no .json file)
+        print(f"[Paper Mode] FIR extraction complete")
         return results
 
     # ============================================================
@@ -502,13 +467,10 @@ To validate, specify --fir-validation-mat
     h_full = irfft(H_half, n=(2*(len(H_half)-1)))
     g = h_full[:fir_length].copy()
 
-    # Save
-    np.savez(output_dir / "fir_coefficients_gp_fixed.npz",
-             g=g, fir_length=fir_length, Ts=Ts,
-             omega=omega, G=G, omega_k=omega_k, Omega_k=Omega_k)
-
+    # Return coefficients in memory (no .npz file)
     results = {
         "fir_length": fir_length,
+        "fir_coefficients": g,  # Pass coefficients in memory
         "Ts": Ts,
         "method": "gp_direct_fixed",
         "n_fft": int(2*(len(H_half)-1)),
@@ -570,11 +532,7 @@ To validate, specify --fir-validation-mat
                         "r2": r2,
                         "transient_skip": int(skip)})
 
-        # Save preview arrays for quick inspection
-        np.savez(output_dir / "validation_preview_fixed.npz",
-                 t=T, y=y, y_pred=y_pred, u=u)
-
-        # Create visualization plots
+        # Create visualization plots (no .npz file)
         plot_gp_fir_results_fixed(
             t=T,
             y=y,
@@ -586,32 +544,5 @@ To validate, specify --fir-validation-mat
             output_dir=output_dir
         )
 
-    else:
-        # If no validation data, create a simple summary figure
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.axis('off')
-
-        info_text = f"""FIR Model Extraction Complete (Fixed Method)
-====================================================
-Method: GP-based interpolation with proper ω→Ω mapping
-FIR Length: {fir_length}
-Sampling Period Ts: {Ts:.6f} s
-FFT Length: {2*(len(H_half)-1)}
-Frequency Range: {omega[0]:.2f} - {omega[-1]:.2f} rad/s
-
-No validation data provided.
-To validate, specify --fir-validation-mat
-"""
-        ax.text(0.5, 0.5, info_text, fontsize=12, family='monospace',
-                ha='center', va='center',
-                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8))
-
-        plt.tight_layout()
-        plt.savefig(output_dir / "gp_fir_fixed_summary.png", dpi=300)
-        plt.close()
-
-    # Minimal text report
-    with open(output_dir / "fir_gp_fixed_results.json", "w") as f:
-        json.dump(results, f, indent=2)
-
+    # Return results (no .json file)
     return results
