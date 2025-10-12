@@ -30,3 +30,5 @@ test_output_paper
 test_output_paper_mode
 PAPER_MODE_IMPLEMENTATION.md
 test_output_fourier
+paper_figures/temp_frf_datapoints
+paper_figures/temp_frf
