@@ -1725,7 +1725,7 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     if nd_values is None:
         nd_values = [10, 30, 50, 100]
 
-    time_durations = [10.0, 30.0, 60.0, 120.0, 300.0, 600.0, None]  # seconds, None means use all data
+    time_durations = [10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 2700.0, None]  # seconds, None means use all data
     n_files_list = [1, 2, 5, 10]  # None means use all files
 
     # Sort MAT files to ensure consistent order across all tests

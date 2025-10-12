@@ -306,13 +306,28 @@ def gp_to_fir_direct_pipeline(
     # ============================================================
     if paper_mode:
         print("[Paper Mode] Using paper-based FIR procedure:")
-        print("  Step 1: Uniform linear ω grid + linear interpolation")
+        print("  Step 1: Uniform linear ω grid + GP prediction")
         print("  Step 2: Two-sided Hermitian spectrum (odd-length)")
         print("  Step 3: IDFT → first N taps as FIR coefficients")
 
-        # Step 1: Build uniform omega grid with linear interpolation
-        omega_uni, G_uni = build_uniform_omega_linear(omega, G, Nd=len(omega))
-        Nd = len(omega_uni)
+        # Step 1: Build uniform omega grid with 1000 points
+        Nd = 1000
+        omega_min = float(np.min(omega))
+        omega_max = float(np.max(omega))
+        omega_uni = np.linspace(omega_min, omega_max, Nd)
+
+        # Use GP predictor if available, otherwise fall back to linear interpolation
+        if gp_predict_func is not None:
+            print("  Using GP predictor for uniform grid (higher accuracy)")
+            G_uni = gp_predict_func(omega_uni)
+        else:
+            print("  Using linear interpolation (GP predictor not available)")
+            Gr = np.interp(omega_uni, omega, np.real(G),
+                          left=np.real(G[0]), right=np.real(G[-1]))
+            Gi = np.interp(omega_uni, omega, np.imag(G),
+                          left=np.imag(G[0]), right=np.imag(G[-1]))
+            G_uni = Gr + 1j * Gi
+
         print(f"  Nd = {Nd} frequency points")
 
         # Step 2: Build two-sided Hermitian spectrum (M = 2*Nd - 1, odd-length)
