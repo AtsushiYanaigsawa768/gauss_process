@@ -906,6 +906,26 @@ def run_fourier_transform(mat_files: List[str], output_dir: Path, n_files: int =
 # Visualization Functions
 # =====================
 
+def configure_plot_style():
+    """Configure matplotlib style for consistent, larger labels and captions."""
+    plt.rcParams.update({
+        'font.size': 14,           # Base font size
+        'axes.labelsize': 16,      # X and Y label size
+        'axes.titlesize': 18,      # Title size
+        'xtick.labelsize': 14,     # X tick label size
+        'ytick.labelsize': 14,     # Y tick label size
+        'legend.fontsize': 14,     # Legend font size
+        'figure.titlesize': 20,    # Figure title size
+        'lines.linewidth': 2.5,    # Line width
+        'lines.markersize': 8,     # Marker size
+        'axes.linewidth': 1.5,     # Axes line width
+        'grid.linewidth': 1.0,     # Grid line width
+        'xtick.major.width': 1.5,  # X tick width
+        'ytick.major.width': 1.5,  # Y tick width
+        'xtick.major.size': 6,     # X tick length
+        'ytick.major.size': 6,     # Y tick length
+    })
+
 def plot_gp_results(omega: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray,
                    y_std: Optional[np.ndarray], title: str, output_path: Path):
     """Plot GP regression results."""
@@ -921,10 +941,13 @@ def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
                    G_std_real: Optional[np.ndarray], G_std_imag: Optional[np.ndarray],
                    output_prefix: Path):
     """Plot complex-valued GP results (Nyquist only)."""
+    # Configure plot style for consistent appearance
+    configure_plot_style()
+
     # Nyquist plot only
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.plot(np.real(G_true), np.imag(G_true), 'k.', markersize=8, label='Measured', alpha=0.6)
-    ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=2, label='GP mean')
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.plot(np.real(G_true), np.imag(G_true), 'k.', markersize=10, label='Measured', alpha=0.6)
+    ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=3, label='GP mean')
 
     if G_std_real is not None and G_std_imag is not None:
         # Plot confidence ellipses at selected frequencies
@@ -934,16 +957,17 @@ def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
             theta = np.linspace(0, 2*np.pi, 100)
             ellipse_x = np.real(G_pred[i]) + 2*G_std_real[i] * np.cos(theta)
             ellipse_y = np.imag(G_pred[i]) + 2*G_std_imag[i] * np.sin(theta)
-            ax.plot(ellipse_x, ellipse_y, 'r-', alpha=0.2, linewidth=0.5)
+            ax.plot(ellipse_x, ellipse_y, 'r-', alpha=0.2, linewidth=1.0)
 
-    ax.set_xlabel('Real{G(jω)}')
-    ax.set_ylabel('Imag{G(jω)}')
-    ax.set_title('Nyquist Plot with GP Regression')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel('Real{G(jω)}', fontsize=18, fontweight='bold')
+    ax.set_ylabel('Imag{G(jω)}', fontsize=18, fontweight='bold')
+    ax.set_title('Nyquist Plot with GP Regression', fontsize=20, fontweight='bold', pad=20)
+    ax.legend(fontsize=16, framealpha=0.9, edgecolor='black', loc='best')
+    ax.grid(True, alpha=0.3, linewidth=1.2)
     ax.axis('equal')
+    ax.tick_params(labelsize=14, width=2, length=6)
     plt.tight_layout()
-    plt.savefig(str(output_prefix) + '_nyquist_gp.png', dpi=150)
+    plt.savefig(str(output_prefix) + '_nyquist_gp.png', dpi=300, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -1759,17 +1783,19 @@ def run_unified_system_identification(omega: np.ndarray, G_complex: np.ndarray,
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Nyquist plot only (as per user request - no Bode, no real/imag plots)
-        fig, ax = plt.subplots(figsize=(8, 8))
-        ax.plot(np.real(G_complex), np.imag(G_complex), 'k.', markersize=8, label='Measured', alpha=0.6)
-        ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=2, label=f'{method.upper()} fit')
-        ax.set_xlabel('Real{G(jω)}')
-        ax.set_ylabel('Imag{G(jω)}')
-        ax.set_title(f'Nyquist Plot - {method.upper()} (RMSE={rmse:.3e})')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        configure_plot_style()
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.plot(np.real(G_complex), np.imag(G_complex), 'k.', markersize=10, label='Measured', alpha=0.6)
+        ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=3, label=f'{method.upper()} fit')
+        ax.set_xlabel('Real{G(jω)}', fontsize=18, fontweight='bold')
+        ax.set_ylabel('Imag{G(jω)}', fontsize=18, fontweight='bold')
+        ax.set_title(f'Nyquist Plot - {method.upper()} (RMSE={rmse:.3e})', fontsize=20, fontweight='bold', pad=20)
+        ax.legend(fontsize=16, framealpha=0.9, edgecolor='black', loc='best')
+        ax.grid(True, alpha=0.3, linewidth=1.2)
         ax.axis('equal')
+        ax.tick_params(labelsize=14, width=2, length=6)
         plt.tight_layout()
-        plt.savefig(output_dir / f'{method}_complex_nyquist.png', dpi=300)
+        plt.savefig(output_dir / f'{method}_complex_nyquist.png', dpi=300, bbox_inches='tight')
         plt.close()
 
         # Results stored internally (no JSON/CSV output as per user request)

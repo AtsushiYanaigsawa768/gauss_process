@@ -227,8 +227,8 @@ def plot_gp_fir_results_fixed(t: np.ndarray, y: np.ndarray,
     ax1.set_ylabel('Output', fontsize=12)
 
     # Title without delay information
-    title = (f'FIR Model Validation (Corrected Method)\n'
-             f'RMSE={rmse:.3e}, FIT={fit_percent:.1f}%, R²={r2:.3f}')
+    title = (f'FIR Model Validation\n'
+             f'RMSE={rmse:.3e}')
     ax1.set_title(title, fontsize=14)
 
     ax1.legend(fontsize=11)
