@@ -4,11 +4,12 @@ data_point_comparison_nyquist.py
 
 Generate Nyquist plots comparing different numbers of frequency data points for paper.
 
-This script creates three Nyquist plots from 1 hour of data (1 MAT file, full duration)
+This script creates four Nyquist plots from 1 hour of data (1 MAT file, full duration)
 with varying numbers of frequency points:
 1. 10 points: nd = 10
-2. 50 points: nd = 50
-3. 100 points: nd = 100
+2. 30 points: nd = 30
+3. 50 points: nd = 50
+4. 100 points: nd = 100
 
 All plots use synchronous demodulation method (matching frequency_response.py).
 
@@ -218,7 +219,7 @@ def main():
     print(f"{'='*80}")
     print(f"Input file: {Path(mat_path).name}")
     print(f"Output directory: {args.output_dir}")
-    print(f"Comparing: 10, 50, 100 frequency points")
+    print(f"Comparing: 10, 30, 50, 100 frequency points")
     print(f"{'='*80}\n")
 
     # Create output directory
@@ -260,10 +261,40 @@ def main():
     )
 
     # ========================================
-    # Condition 2: 50 data points
+    # Condition 2: 30 data points
     # ========================================
     print(f"\n{'='*60}")
-    print("Condition 2: 50 Frequency Points (nd=50)")
+    print("Condition 2: 30 Frequency Points (nd=30)")
+    print(f"{'='*60}")
+
+    frf_csv_30pt = run_frequency_response(
+        mat_files=mat_files,
+        output_dir=temp_dir,
+        nd=30,
+        prefix='30pt'
+    )
+
+    omega_30pt, G_30pt = load_frf_data(frf_csv_30pt)
+
+    n_valid_30pt = np.sum(np.isfinite(G_30pt))
+    print(f"Valid frequency points: {n_valid_30pt}/{len(omega_30pt)}")
+    print(f"Frequency range: {omega_30pt[0]:.3f} - {omega_30pt[-1]:.3f} rad/s")
+    print(f"              = {omega_30pt[0]/(2*np.pi):.3f} - {omega_30pt[-1]/(2*np.pi):.3f} Hz")
+
+    # Generate plot
+    output_path_30pt = output_dir / 'nyquist_30points'
+    plot_nyquist(
+        omega_30pt, G_30pt,
+        output_path_30pt,
+        title='Nyquist Plot (30 Frequency Points)',
+        save_eps=not args.no_eps
+    )
+
+    # ========================================
+    # Condition 3: 50 data points
+    # ========================================
+    print(f"\n{'='*60}")
+    print("Condition 3: 50 Frequency Points (nd=50)")
     print(f"{'='*60}")
 
     frf_csv_50pt = run_frequency_response(
@@ -290,10 +321,10 @@ def main():
     )
 
     # ========================================
-    # Condition 3: 100 data points
+    # Condition 4: 100 data points
     # ========================================
     print(f"\n{'='*60}")
-    print("Condition 3: 100 Frequency Points (nd=100)")
+    print("Condition 4: 100 Frequency Points (nd=100)")
     print(f"{'='*60}")
 
     frf_csv_100pt = run_frequency_response(
@@ -328,8 +359,9 @@ def main():
     print(f"Output directory: {output_dir.resolve()}")
     print(f"\nGenerated files:")
     print(f"  1. {output_path_10pt}.png (and .eps) - 10 Points")
-    print(f"  2. {output_path_50pt}.png (and .eps) - 50 Points")
-    print(f"  3. {output_path_100pt}.png (and .eps) - 100 Points")
+    print(f"  2. {output_path_30pt}.png (and .eps) - 30 Points")
+    print(f"  3. {output_path_50pt}.png (and .eps) - 50 Points")
+    print(f"  4. {output_path_100pt}.png (and .eps) - 100 Points")
     print(f"\nAll plots use:")
     print(f"  - 1 hour of data (1 MAT file, full duration)")
     print(f"  - Logarithmic frequency grid")

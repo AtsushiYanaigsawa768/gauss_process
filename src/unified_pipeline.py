@@ -569,13 +569,27 @@ class GaussianProcessRegressor:
         self.X_scaler = None
         self.y_scaler = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray, optimize: bool = True, n_restarts: int = 3):
-        """Fit the GP to training data."""
+    def fit(self, X: np.ndarray, y: np.ndarray, optimize: bool = True, n_restarts: int = 3,
+            use_grid_search: bool = False, param_grids: Dict = None, max_grid_combinations: int = 5000):
+        """Fit the GP to training data.
+
+        Args:
+            X: Training inputs (N x D)
+            y: Training outputs (N,)
+            optimize: Whether to optimize hyperparameters
+            n_restarts: Number of restarts for gradient-based optimization (ignored if use_grid_search=True)
+            use_grid_search: If True, use grid search instead of gradient-based optimization
+            param_grids: Custom parameter grids for grid search (optional)
+            max_grid_combinations: Maximum number of grid combinations before random sampling
+        """
         self.X_train = X.copy()
         self.y_train = y.copy()
 
         if optimize:
-            self._optimize_hyperparameters(n_restarts)
+            if use_grid_search:
+                self._grid_search_hyperparameters(param_grids, max_grid_combinations)
+            else:
+                self._optimize_hyperparameters(n_restarts)
 
         # Compute kernel matrix and its inverse
         K = self.kernel(self.X_train)
@@ -604,6 +618,121 @@ class GaussianProcessRegressor:
             return mean, std
 
         return mean
+
+    def _grid_search_hyperparameters(self, param_grids: Dict = None, max_combinations: int = 5000):
+        """Grid search for kernel hyperparameters by maximizing log marginal likelihood.
+
+        Args:
+            param_grids: Dictionary mapping parameter names to grid values.
+                        If None, uses default grids based on kernel bounds.
+            max_combinations: Maximum number of combinations to try. If exceeded, uses random sampling.
+        """
+        from itertools import product
+
+        def neg_log_marginal_likelihood(params, noise_var):
+            """Compute negative log marginal likelihood."""
+            self.kernel.set_params(params)
+            self.noise_variance = noise_var
+
+            K = self.kernel(self.X_train)
+            K += self.noise_variance * np.eye(K.shape[0])
+
+            try:
+                L = np.linalg.cholesky(K)
+                alpha = np.linalg.solve(L, self.y_train)
+                alpha = np.linalg.solve(L.T, alpha)
+
+                # Negative log marginal likelihood
+                nll = 0.5 * (self.y_train @ alpha)
+                nll += np.sum(np.log(np.diag(L)))
+                nll += 0.5 * len(self.y_train) * np.log(2 * np.pi)
+
+                return nll
+            except np.linalg.LinAlgError:
+                return 1e10
+
+        # Get default grids if not provided
+        if param_grids is None:
+            param_grids = self._get_default_param_grids()
+
+        # Add noise variance grid - increased to 10 points
+        noise_grid = param_grids.get('noise_variance', np.logspace(-10, -2, 10))
+
+        # Extract kernel parameter grids
+        kernel_param_names = []
+        kernel_param_grids = []
+
+        # Get parameter names from kernel
+        current_params = self.kernel.get_params()
+        for i, (low, high) in enumerate(self.kernel.bounds):
+            param_name = f'param_{i}'
+            if param_name in param_grids:
+                grid = param_grids[param_name]
+            else:
+                # Create default grid based on bounds - increased to 15 points
+                if low > 0 and high / low > 100:  # Log scale for large ranges
+                    grid = np.logspace(np.log10(low), np.log10(high), 15)
+                else:
+                    grid = np.linspace(low, high, 15)
+            kernel_param_names.append(param_name)
+            kernel_param_grids.append(grid)
+
+        # Generate all combinations
+        all_combinations = list(product(*kernel_param_grids, noise_grid))
+        n_combinations = len(all_combinations)
+
+        print(f"  Grid search: {n_combinations} combinations to evaluate...")
+
+        # If too many combinations, use random sampling
+        if n_combinations > max_combinations:
+            print(f"  Too many combinations ({n_combinations}), randomly sampling {max_combinations}...")
+            import random
+            all_combinations = random.sample(all_combinations, max_combinations)
+            n_combinations = max_combinations
+
+        # Evaluate all combinations
+        best_params = None
+        best_noise = None
+        best_nll = np.inf
+
+        for i, combination in enumerate(all_combinations):
+            kernel_params = np.array(combination[:-1])
+            noise_var = combination[-1]
+
+            nll = neg_log_marginal_likelihood(kernel_params, noise_var)
+
+            if nll < best_nll:
+                best_nll = nll
+                best_params = kernel_params
+                best_noise = noise_var
+
+            # Progress reporting
+            if (i + 1) % max(1, n_combinations // 10) == 0:
+                print(f"    Progress: {i+1}/{n_combinations} ({100*(i+1)/n_combinations:.1f}%), best NLL: {best_nll:.3f}")
+
+        # Set optimal parameters
+        self.kernel.set_params(best_params)
+        self.noise_variance = best_noise
+
+        print(f"  Grid search complete. Best NLL: {best_nll:.3f}")
+        print(f"  Optimal params: {best_params}, noise: {best_noise:.3e}")
+
+    def _get_default_param_grids(self) -> Dict:
+        """Get default parameter grids based on kernel type and bounds."""
+        grids = {}
+
+        # Noise variance grid (common for all kernels) - increased to 10 points
+        grids['noise_variance'] = np.logspace(-10, -2, 10)
+
+        # Kernel-specific grids based on bounds - increased to 15 points
+        for i, (low, high) in enumerate(self.kernel.bounds):
+            param_name = f'param_{i}'
+            if low > 0 and high / low > 100:  # Log scale for large ranges
+                grids[param_name] = np.logspace(np.log10(low), np.log10(high), 15)
+            else:
+                grids[param_name] = np.linspace(low, high, 15)
+
+        return grids
 
     def _optimize_hyperparameters(self, n_restarts: int):
         """Optimize kernel hyperparameters by maximizing log marginal likelihood."""
@@ -1062,7 +1191,10 @@ def run_gp_pipeline(config: argparse.Namespace):
         # Fit real part
         gp_real = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                          noise_variance=config.noise_variance)
-        gp_real.fit(X_gp_normalized, y_real, optimize=config.optimize, n_restarts=config.n_restarts)
+        use_grid_search = getattr(config, 'use_grid_search', False)
+        max_grid_combinations = getattr(config, 'grid_search_max_combinations', 5000)
+        gp_real.fit(X_gp_normalized, y_real, optimize=config.optimize, n_restarts=config.n_restarts,
+                   use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations)
 
         y_real_pred, y_real_std = gp_real.predict(X_gp_normalized, return_std=True)
 
@@ -1076,7 +1208,8 @@ def run_gp_pipeline(config: argparse.Namespace):
         # Fit imaginary part
         gp_imag = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                          noise_variance=config.noise_variance)
-        gp_imag.fit(X_gp_normalized, y_imag, optimize=config.optimize, n_restarts=config.n_restarts)
+        gp_imag.fit(X_gp_normalized, y_imag, optimize=config.optimize, n_restarts=config.n_restarts,
+                   use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations)
 
         y_imag_pred, y_imag_std = gp_imag.predict(X_gp_normalized, return_std=True)
 
@@ -1134,7 +1267,10 @@ def run_gp_pipeline(config: argparse.Namespace):
         # Fit magnitude (in log scale)
         gp_mag = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                         noise_variance=config.noise_variance)
-        gp_mag.fit(X_gp_normalized, y_mag, optimize=config.optimize, n_restarts=config.n_restarts)
+        use_grid_search = getattr(config, 'use_grid_search', False)
+        max_grid_combinations = getattr(config, 'grid_search_max_combinations', 5000)
+        gp_mag.fit(X_gp_normalized, y_mag, optimize=config.optimize, n_restarts=config.n_restarts,
+                  use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations)
 
         y_mag_pred, y_mag_std = gp_mag.predict(X_gp_normalized, return_std=True)
 
@@ -1147,7 +1283,8 @@ def run_gp_pipeline(config: argparse.Namespace):
         # Fit phase
         gp_phase = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                           noise_variance=config.noise_variance)
-        gp_phase.fit(X_gp_normalized, y_phase, optimize=config.optimize, n_restarts=config.n_restarts)
+        gp_phase.fit(X_gp_normalized, y_phase, optimize=config.optimize, n_restarts=config.n_restarts,
+                    use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations)
 
         y_phase_pred, y_phase_std = gp_phase.predict(X_gp_normalized, return_std=True)
 
@@ -1471,7 +1608,11 @@ def main():
     parser.add_argument('--no-optimize', dest='optimize', action='store_false',
                       help='Disable hyperparameter optimization')
     parser.add_argument('--n-restarts', type=int, default=3,
-                      help='Number of optimization restarts (default: 3)')
+                      help='Number of optimization restarts for gradient-based optimization (default: 3)')
+    parser.add_argument('--grid-search', action='store_true',
+                      help='Use grid search instead of gradient-based optimization for hyperparameter tuning')
+    parser.add_argument('--grid-search-max-combinations', type=int, default=5000,
+                      help='Maximum number of grid combinations before random sampling (default: 5000)')
 
     # Classical/ML method options
     parser.add_argument('--n-numerator', type=int, default=2,
@@ -1508,6 +1649,9 @@ def main():
 
     # Add method info to args
     args.is_gp = args.method == 'gp'
+
+    # Add grid search info to args (make it accessible as use_grid_search)
+    args.use_grid_search = args.grid_search
 
     # Run pipeline
     run_gp_pipeline(args)
@@ -1694,7 +1838,8 @@ def save_results_to_csv(result_entry: Dict, output_base_dir: Path, timestamp: st
 
 def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_output',
                           fir_validation_mat: Optional[str] = None, nd_values: List[int] = None,
-                          freq_method: str = 'frf'):
+                          freq_method: str = 'frf', use_grid_search: bool = False,
+                          grid_search_max_combinations: int = 5000):
     """
     Run comprehensive tests with different kernels, time intervals, file counts, and nd values.
     Save overall RMSE results in CSV format incrementally after each test.
@@ -1713,20 +1858,19 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     # GP kernels
     kernels = ['rbf', 'matern', 'matern12', 'matern32', 'matern52', 'rq', 'exp', 'tc', 'dc', 'di',
                'ss1', 'ss2', 'sshf', 'stable_spline']
-    # Classical and ML methods
-    classical_methods = ['nls', 'ls', 'iwls', 'tls', 'ml', 'log', 'lpm']
-    ml_methods = ['rf', 'gbr', 'svm']
+    # Classical methods
+    classical_methods = ['nls', 'ls']
 
     # Combine all methods
-    all_methods = ['gp_' + k for k in kernels] + classical_methods + ml_methods
+    all_methods = ['gp_' + k for k in kernels] + classical_methods
     # all_methods = classical_methods + ml_methods
 
     # Set default nd values if not provided
     if nd_values is None:
         nd_values = [10, 30, 50, 100]
 
-    time_durations = [10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 2700.0, None]  # seconds, None means use all data
-    n_files_list = [1, 2, 5, 10]  # None means use all files
+    time_durations = [600.0, 1800.0, None]  # seconds, None means use all data
+    n_files_list = [1, 10]  # None means use all files
 
     # Sort MAT files to ensure consistent order across all tests
     mat_files = sorted(mat_files)
@@ -1744,7 +1888,6 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
         print(f"  [{i}] {f}")
     print(f"GP Kernels: {', '.join(kernels)}")
     print(f"Classical methods: {', '.join(classical_methods)}")
-    print(f"ML methods: {', '.join(ml_methods)}")
     print(f"Time durations: {time_durations}")
     print(f"File counts: {n_files_list}")
     print(f"Frequency points (nd): {nd_values}")
@@ -1814,7 +1957,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 method=method,  # Add method type
                                 is_gp=is_gp,  # Flag for GP vs other methods
                                 nd=nd,  # Number of frequency points
-                                freq_method=freq_method  # Frequency analysis method
+                                freq_method=freq_method,  # Frequency analysis method
+                                use_grid_search=use_grid_search,  # Grid search flag
+                                grid_search_max_combinations=grid_search_max_combinations  # Grid search max combinations
                             )
 
                             # Run the pipeline and get results directly
@@ -1948,7 +2093,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             method=method,
                             is_gp=is_gp,
                             nd=nd,
-                            freq_method=freq_method
+                            freq_method=freq_method,
+                            use_grid_search=use_grid_search,  # Grid search flag
+                            grid_search_max_combinations=grid_search_max_combinations  # Grid search max combinations
                         )
 
                         # Run the pipeline and get results directly
@@ -2179,32 +2326,32 @@ if __name__ == "__main__":
         print("=" * 80)
         print()
 
-        # Phase 2: Fourier (normal-scale) method
-        print("=" * 80)
-        print("PHASE 2: Testing with Fourier Transform (Normal-scale frequency analysis)")
-        print("=" * 80)
-        print()
+        # # Phase 2: Fourier (normal-scale) method
+        # print("=" * 80)
+        # print("PHASE 2: Testing with Fourier Transform (Normal-scale frequency analysis)")
+        # print("=" * 80)
+        # print()
 
-        run_comprehensive_test(
-            mat_files,
-            output_base_dir='test_output_fourier',
-            fir_validation_mat=validation_mat,
-            freq_method='fourier'
-        )
+        # run_comprehensive_test(
+        #     mat_files,
+        #     output_base_dir='test_output_fourier',
+        #     fir_validation_mat=validation_mat,
+        #     freq_method='fourier'
+        # )
 
-        print("\n" + "=" * 80)
-        print("PHASE 2 COMPLETED: Fourier tests finished")
-        print("=" * 80)
-        print()
+        # print("\n" + "=" * 80)
+        # print("PHASE 2 COMPLETED: Fourier tests finished")
+        # print("=" * 80)
+        # print()
 
-        print("=" * 80)
-        print("ALL COMPREHENSIVE TESTS COMPLETED!")
-        print("=" * 80)
-        print()
-        print("Results saved to:")
-        print("  - FRF method (log-scale):    test_output_frf/")
-        print("  - Fourier method (normal):   test_output_fourier/")
-        print("=" * 80)
+        # print("=" * 80)
+        # print("ALL COMPREHENSIVE TESTS COMPLETED!")
+        # print("=" * 80)
+        # print()
+        # print("Results saved to:")
+        # print("  - FRF method (log-scale):    test_output_frf/")
+        # print("  - Fourier method (normal):   test_output_fourier/")
+        # print("=" * 80)
     else:
         # Run normal pipeline
         main()
