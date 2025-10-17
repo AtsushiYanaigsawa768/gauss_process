@@ -909,21 +909,21 @@ def run_fourier_transform(mat_files: List[str], output_dir: Path, n_files: int =
 def configure_plot_style():
     """Configure matplotlib style for consistent, larger labels and captions."""
     plt.rcParams.update({
-        'font.size': 14,           # Base font size
-        'axes.labelsize': 16,      # X and Y label size
-        'axes.titlesize': 18,      # Title size
-        'xtick.labelsize': 14,     # X tick label size
-        'ytick.labelsize': 14,     # Y tick label size
-        'legend.fontsize': 14,     # Legend font size
-        'figure.titlesize': 20,    # Figure title size
-        'lines.linewidth': 2.5,    # Line width
-        'lines.markersize': 8,     # Marker size
-        'axes.linewidth': 1.5,     # Axes line width
-        'grid.linewidth': 1.0,     # Grid line width
-        'xtick.major.width': 1.5,  # X tick width
-        'ytick.major.width': 1.5,  # Y tick width
-        'xtick.major.size': 6,     # X tick length
-        'ytick.major.size': 6,     # Y tick length
+        'font.size': 22,           # Base font size
+        'axes.labelsize': 30,      # X and Y label size
+        'axes.titlesize': 32,      # Title size
+        'xtick.labelsize': 22,     # X tick label size
+        'ytick.labelsize': 22,     # Y tick label size
+        'legend.fontsize': 24,     # Legend font size
+        'figure.titlesize': 34,    # Figure title size
+        'lines.linewidth': 3.5,    # Line width
+        'lines.markersize': 12,    # Marker size
+        'axes.linewidth': 2.5,     # Axes line width
+        'grid.linewidth': 1.5,     # Grid line width
+        'xtick.major.width': 2.5,  # X tick width
+        'ytick.major.width': 2.5,  # Y tick width
+        'xtick.major.size': 10,    # X tick length
+        'ytick.major.size': 10,    # Y tick length
     })
 
 def plot_gp_results(omega: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray,
@@ -946,8 +946,8 @@ def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
 
     # Nyquist plot only
     fig, ax = plt.subplots(figsize=(10, 10))
-    ax.plot(np.real(G_true), np.imag(G_true), 'k.', markersize=10, label='Measured', alpha=0.6)
-    ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=3, label='GP mean')
+    ax.plot(np.real(G_true), np.imag(G_true), 'k.', markersize=14, label='Measured', alpha=0.6)
+    ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=4.0, label='GP mean')
 
     if G_std_real is not None and G_std_imag is not None:
         # Plot confidence ellipses at selected frequencies
@@ -959,13 +959,13 @@ def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
             ellipse_y = np.imag(G_pred[i]) + 2*G_std_imag[i] * np.sin(theta)
             ax.plot(ellipse_x, ellipse_y, 'r-', alpha=0.2, linewidth=1.0)
 
-    ax.set_xlabel('Real{G(jω)}', fontsize=18, fontweight='bold')
-    ax.set_ylabel('Imag{G(jω)}', fontsize=18, fontweight='bold')
-    ax.set_title('Nyquist Plot with GP Regression', fontsize=20, fontweight='bold', pad=20)
-    ax.legend(fontsize=16, framealpha=0.9, edgecolor='black', loc='best')
-    ax.grid(True, alpha=0.3, linewidth=1.2)
+    ax.set_xlabel('Real{G(jω)}', fontsize=32, fontweight='bold')
+    ax.set_ylabel('Imag{G(jω)}', fontsize=32, fontweight='bold')
+    ax.set_title('Nyquist Plot with GP Regression', fontsize=36, fontweight='bold', pad=20)
+    ax.legend(fontsize=26, framealpha=0.9, edgecolor='black', loc='best')
+    ax.grid(True, alpha=0.3, linewidth=1.5)
     ax.axis('equal')
-    ax.tick_params(labelsize=14, width=2, length=6)
+    ax.tick_params(labelsize=24, width=2.5, length=10)
     plt.tight_layout()
     plt.savefig(str(output_prefix) + '_nyquist_gp.png', dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -1785,15 +1785,15 @@ def run_unified_system_identification(omega: np.ndarray, G_complex: np.ndarray,
         # Nyquist plot only (as per user request - no Bode, no real/imag plots)
         configure_plot_style()
         fig, ax = plt.subplots(figsize=(10, 10))
-        ax.plot(np.real(G_complex), np.imag(G_complex), 'k.', markersize=10, label='Measured', alpha=0.6)
-        ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=3, label=f'{method.upper()} fit')
-        ax.set_xlabel('Real{G(jω)}', fontsize=18, fontweight='bold')
-        ax.set_ylabel('Imag{G(jω)}', fontsize=18, fontweight='bold')
-        ax.set_title(f'Nyquist Plot - {method.upper()} (RMSE={rmse:.3e})', fontsize=20, fontweight='bold', pad=20)
-        ax.legend(fontsize=16, framealpha=0.9, edgecolor='black', loc='best')
-        ax.grid(True, alpha=0.3, linewidth=1.2)
+        ax.plot(np.real(G_complex), np.imag(G_complex), 'k.', markersize=14, label='Measured', alpha=0.6)
+        ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=4.0, label=f'{method.upper()} fit')
+        ax.set_xlabel('Real{G(jω)}', fontsize=32, fontweight='bold')
+        ax.set_ylabel('Imag{G(jω)}', fontsize=32, fontweight='bold')
+        ax.set_title(f'Nyquist Plot - {method.upper()} (RMSE={rmse:.3e})', fontsize=36, fontweight='bold', pad=20)
+        ax.legend(fontsize=26, framealpha=0.9, edgecolor='black', loc='best')
+        ax.grid(True, alpha=0.3, linewidth=1.5)
         ax.axis('equal')
-        ax.tick_params(labelsize=14, width=2, length=6)
+        ax.tick_params(labelsize=24, width=2.5, length=10)
         plt.tight_layout()
         plt.savefig(output_dir / f'{method}_complex_nyquist.png', dpi=300, bbox_inches='tight')
         plt.close()
@@ -2344,7 +2344,9 @@ if __name__ == "__main__":
             mat_files,
             output_base_dir='test_output_frf',
             fir_validation_mat=validation_mat,
-            freq_method='frf'
+            freq_method='frf',
+            use_grid_search=True,
+            grid_search_max_combinations=5000
         )
 
         print("\n" + "=" * 80)
@@ -2362,7 +2364,9 @@ if __name__ == "__main__":
         #     mat_files,
         #     output_base_dir='test_output_fourier',
         #     fir_validation_mat=validation_mat,
-        #     freq_method='fourier'
+        #     freq_method='fourier',
+        #     use_grid_search=True,
+        #     grid_search_max_combinations=5000
         # )
 
         # print("\n" + "=" * 80)
