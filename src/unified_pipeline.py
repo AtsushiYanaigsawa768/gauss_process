@@ -729,11 +729,11 @@ class GaussianProcessRegressor:
             if param_name in param_grids:
                 grid = param_grids[param_name]
             else:
-                # Create default grid based on bounds - 20 points for better coverage
+                # Create default grid based on bounds - 30 points for better coverage
                 if low > 0 and high / low > 100:  # Log scale for large ranges
-                    grid = np.logspace(np.log10(low), np.log10(high), 20)
+                    grid = np.logspace(np.log10(low), np.log10(high), 30)
                 else:
-                    grid = np.linspace(low, high, 20)
+                    grid = np.linspace(low, high, 30)
             kernel_param_names.append(param_name)
             kernel_param_grids.append(grid)
 
@@ -811,9 +811,9 @@ class GaussianProcessRegressor:
         for i, (low, high) in enumerate(self.kernel.bounds):
             param_name = f'param_{i}'
             if low > 0 and high / low > 100:  # Log scale for large ranges
-                grids[param_name] = np.logspace(np.log10(low), np.log10(high), 20)
+                grids[param_name] = np.logspace(np.log10(low), np.log10(high), 30)
             else:
-                grids[param_name] = np.linspace(low, high, 20)
+                grids[param_name] = np.linspace(low, high, 30)
 
         return grids
 
@@ -1095,7 +1095,7 @@ def generate_validation_data_from_mat(mat_file: str, nd: int = 200, freq_method:
     mat_file_path = Path(mat_file).resolve()
     print(f"  Generating validation data from {mat_file_path}...")
 
-    # Load time-series data from mat file
+    # Load time-series data from mat file (FULL DURATION)
     t, u, y = load_time_u_y(mat_file_path, y_col=0)
 
     # Generate frequency grid
@@ -1112,7 +1112,7 @@ def generate_validation_data_from_mat(mat_file: str, nd: int = 200, freq_method:
 
     # Compute synchronous demodulation coefficients
     subtract_mean = True
-    drop_seconds = 0.0
+    drop_seconds = 0.0  # Use all data from start
 
     U = synchronous_coefficients_trapz(t, u, omega, drop_seconds, subtract_mean)
     Y = synchronous_coefficients_trapz(t, y, omega, drop_seconds, subtract_mean)
@@ -1124,8 +1124,12 @@ def generate_validation_data_from_mat(mat_file: str, nd: int = 200, freq_method:
     G_real = np.real(G)
     G_imag = np.imag(G)
 
+    # Detailed output for verification
+    time_duration = t[-1] - t[0]
     print(f"  Validation data generated: {nd} frequency points")
+    print(f"  Time data: {len(t)} samples, duration={time_duration:.1f}s (FULL)")
     print(f"  Frequency range: {omega[0]/(2*np.pi):.3f} - {omega[-1]/(2*np.pi):.3f} Hz")
+    print(f"  NOTE: This is the SAME data used for FIR model time-domain evaluation")
 
     return omega, G_real, G_imag
 
@@ -1244,7 +1248,12 @@ def run_gp_pipeline(config: argparse.Namespace):
                     print(f"Warning: Validation MAT file not found: {validation_mat}")
                     validation_mat = None
                 else:
-                    print(f"  FIR validation file: {validation_mat}")
+                    print(f"\n" + "="*70)
+                    print(f"FIR MODEL VALIDATION DATA")
+                    print(f"="*70)
+                    print(f"  Validation file: {validation_mat}")
+                    print(f"  NOTE: Time-domain RMSE will be computed using FULL duration")
+                    print(f"="*70)
 
             # Create a prediction function for the estimator
             def estimator_predict_at_omega(omega_new):
@@ -1443,7 +1452,7 @@ def run_gp_pipeline(config: argparse.Namespace):
                 # Use 200 points for grid search validation (higher resolution than training)
                 # Note: Different mat files → different G(jω) values
                 # Validation data is always returned in raw (non-normalized) scale
-                nd_validation = 200  # Fixed at 200 points for grid search validation
+                nd_validation = 150  # Fixed at 150 points for grid search validation
                 omega_val, G_real_val, G_imag_val = generate_validation_data_from_mat(
                     config.fir_validation_mat,
                     nd=nd_validation,
@@ -1648,7 +1657,13 @@ def run_gp_pipeline(config: argparse.Namespace):
                 print(f"Warning: Validation MAT file not found: {validation_mat}")
                 validation_mat = None
             else:
-                print(f"  FIR validation file: {validation_mat}")
+                print(f"\n" + "="*70)
+                print(f"FIR MODEL VALIDATION DATA")
+                print(f"="*70)
+                print(f"  Validation file: {validation_mat}")
+                print(f"  NOTE: This is the SAME file used for grid search validation")
+                print(f"  NOTE: Time-domain RMSE will be computed using FULL duration")
+                print(f"="*70)
 
         # Create a GP prediction function for better interpolation
         def gp_predict_at_omega(omega_new):
@@ -2187,6 +2202,28 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     # Sort MAT files to ensure consistent order across all tests
     mat_files = sorted(mat_files)
 
+    # CRITICAL: Exclude validation file from training files
+    training_files = mat_files.copy()
+    if fir_validation_mat is not None:
+        validation_mat_path = Path(fir_validation_mat).resolve()
+        training_files = [
+            f for f in training_files
+            if Path(f).resolve() != validation_mat_path
+        ]
+        print("=" * 80)
+        print("TRAIN/TEST DATA SEPARATION")
+        print("=" * 80)
+        print(f"Total MAT files available: {len(mat_files)}")
+        print(f"Test file (EXCLUDED from training): {fir_validation_mat}")
+        print(f"Training files available: {len(training_files)}")
+        print("=" * 80)
+        print()
+
+        if len(training_files) == 0:
+            print("ERROR: No training files remaining after excluding test file!")
+            print("Need at least 2 MAT files for proper train/test split.")
+            return
+
     # Results storage
     all_results = []
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -2194,9 +2231,8 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     print("=" * 80)
     print("Starting Comprehensive System Identification Testing Suite")
     print(f"Timestamp: {timestamp}")
-    print(f"Total MAT files available: {len(mat_files)}")
-    print(f"MAT files (sorted for consistency):")
-    for i, f in enumerate(mat_files, 1):
+    print(f"Training files (sorted for consistency):")
+    for i, f in enumerate(training_files, 1):
         print(f"  [{i}] {f}")
     print(f"GP Kernels: {', '.join(kernels)}")
     print(f"Classical methods: {', '.join(classical_methods)}")
@@ -2224,10 +2260,10 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
         for nd in nd_values:
             # For each number of files
             for n_files in n_files_list:
-                if n_files is not None and n_files > len(mat_files):
+                if n_files is not None and n_files > len(training_files):
                     continue  # Skip if requesting more files than available
 
-                actual_n_files = n_files if n_files is not None else len(mat_files)
+                actual_n_files = n_files if n_files is not None else len(training_files)
 
                 # For n_files = 1, test different time durations
                 if n_files == 1:
@@ -2242,15 +2278,15 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
                         print(f"\nTest: {test_name}")
                         print(f"  Method: {method}")
-                        print(f"  Input data: {mat_files[0]}")
-                        print(f"  FIR validation: {fir_validation_mat}")
+                        print(f"  Training data: {training_files[0]}")
+                        print(f"  Test data (FIR validation): {fir_validation_mat}")
                         print(f"  Duration: {time_str}")
                         print(f"  nd: {nd}")
 
                         try:
                             # Create argparse-like namespace
                             config = argparse.Namespace(
-                                mat_files=mat_files[:1],
+                                mat_files=training_files[:1],
                                 use_existing=None,
                                 n_files=1,
                                 time_duration=time_duration,
@@ -2373,23 +2409,23 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                     test_name = f"{method}_nd{nd}_{actual_n_files}files"
                     output_dir = Path(output_base_dir) / timestamp / test_name
 
-                    # List of files to use
-                    files_to_use = mat_files[:actual_n_files]
+                    # List of files to use (from TRAINING files, not all files)
+                    files_to_use = training_files[:actual_n_files]
 
                     print(f"\nTest: {test_name}")
                     print(f"  Method: {method}")
-                    print(f"  Input data ({actual_n_files} files):")
+                    print(f"  Training data ({actual_n_files} files):")
                     for i, f in enumerate(files_to_use, 1):
                         print(f"    [{i}] {f}")
-                    print(f"  FIR validation: {fir_validation_mat}")
+                    print(f"  Test data (FIR validation): {fir_validation_mat}")
                     print(f"  nd: {nd}")
 
                     try:
                         # Create argparse-like namespace
                         config = argparse.Namespace(
-                            mat_files=mat_files[:actual_n_files] if n_files is not None else mat_files,
+                            mat_files=training_files[:actual_n_files] if n_files is not None else training_files,
                             use_existing=None,
-                            n_files=n_files if n_files is not None else len(mat_files),
+                            n_files=n_files if n_files is not None else len(training_files),
                             time_duration=None,
                             kernel=kernel if is_gp else 'rbf',
                             nu=2.5 if kernel == 'matern' else None,
@@ -2605,20 +2641,21 @@ if __name__ == "__main__":
 
         # Find validation MAT file for FIR model evaluation
         # This file will be used consistently across ALL tests for fair comparison
+        # IMPORTANT: Validation file must be EXCLUDED from training files
         validation_mat = None
-        for f in mat_files:
-            if 'test' in f.lower():
-                validation_mat = f
-                break
 
-        if not validation_mat:
-            # Use first file as validation if no test file found
-            validation_mat = mat_files[0]
-            print(f"⚠️  Warning: No test file found, using {validation_mat} for FIR validation")
+        # Try to use the last file as validation (to avoid overlap with training)
+        if len(mat_files) >= 2:
+            validation_mat = mat_files[-1]  # Use last file for testing
+            print(f"✓ Using LAST file for validation (test data): {validation_mat}")
+            print(f"✓ Training files will use first {len(mat_files)-1} files")
         else:
-            print(f"✓ Using validation file for FIR evaluation: {validation_mat}")
+            print(f"⚠️  ERROR: Need at least 2 MAT files for train/test split!")
+            print(f"   Found only {len(mat_files)} file(s)")
+            sys.exit(1)
 
-        print(f"ℹ️  NOTE: This validation file will be used consistently for ALL tests")
+        print(f"ℹ️  NOTE: This validation file will be EXCLUDED from training data")
+        print(f"ℹ️  NOTE: This ensures proper train/test separation")
         print()
 
         # Run comprehensive test with BOTH frequency methods

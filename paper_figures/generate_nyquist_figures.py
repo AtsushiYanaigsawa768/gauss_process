@@ -28,13 +28,13 @@ from scipy.signal import get_window
 
 # Set publication-quality plot parameters
 plt.rcParams.update({
-    'font.size': 12,
+    'font.size': 16,
     'font.family': 'serif',
-    'axes.labelsize': 14,
-    'axes.titlesize': 14,
-    'xtick.labelsize': 12,
-    'ytick.labelsize': 12,
-    'legend.fontsize': 11,
+    'axes.labelsize': 20,
+    'axes.titlesize': 22,
+    'xtick.labelsize': 16,
+    'ytick.labelsize': 16,
+    'legend.fontsize': 16,
     'figure.figsize': (8, 6),
     'lines.linewidth': 2,
     'lines.markersize': 8,
@@ -346,9 +346,9 @@ def plot_nyquist(
             markersize=10, color='blue', label='Measured Data')
 
     # Labels and formatting
-    ax.set_xlabel(r"$\mathrm{Re}(G(j\omega))$", fontsize=14)
-    ax.set_ylabel(r"$\mathrm{Im}(G(j\omega))$", fontsize=14)
-    ax.set_title(title, fontsize=16)
+    ax.set_xlabel(r"$\mathrm{Re}(G(j\omega))$", fontsize=20)
+    ax.set_ylabel(r"$\mathrm{Im}(G(j\omega))$", fontsize=20)
+    ax.set_title(title, fontsize=22)
     ax.grid(True, linestyle='--')
     ax.legend(loc='best')
 
