@@ -9,11 +9,13 @@ frequency-response data with outlier-robust processing.
 ‐ StandardScaler で入力を前処理
 ‐ Hampel フィルタで MSE 計算時の外れ値を除外
 ‐ 訓練／テストを縦に並べた Nyquist 図
+‐ ハイパーパラメータのグリッドサーチ機能
 """
 
 from pathlib import Path
 import sys
 import warnings
+from itertools import product
 
 import matplotlib.pyplot as plt
 import numpy as np

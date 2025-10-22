@@ -22,6 +22,11 @@ Usage:
       --kernel rbf --normalize --extract-fir --fir-length 1024
       --fir-validation-mat input/input_test_20250912_165937.mat
       --out-dir output_fourier
+    python src/unified_pipeline.py input/*.mat --n-files 1 --nd 100
+      --kernel rbf --normalize --grid-search
+      --fir-validation-mat input/input_test_20250912_165937.mat
+      --extract-fir --fir-length 1024
+      --out-dir output_grid_search
 """
 
 import argparse
@@ -540,7 +545,7 @@ class GPConfig:
     """Configuration for GP regression."""
     kernel_type: str = 'rbf'
     kernel_params: Dict = field(default_factory=dict)
-    noise_variance: float = 1e-6
+    noise_variance: float = 0.0  # Set to 0 for pure GP regression (no noise assumption)
     optimize: bool = True
     n_restarts: int = 3
     normalize_inputs: bool = True
@@ -559,7 +564,7 @@ class SystemIDConfig:
 class GaussianProcessRegressor:
     """Gaussian Process Regressor with extensible kernel support."""
 
-    def __init__(self, kernel: Kernel, noise_variance: float = 1e-6):
+    def __init__(self, kernel: Kernel, noise_variance: float = 0.0):
         self.kernel = kernel
         self.noise_variance = noise_variance
         self.X_train = None
@@ -569,17 +574,37 @@ class GaussianProcessRegressor:
         self.X_scaler = None
         self.y_scaler = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray, optimize: bool = True, n_restarts: int = 3):
-        """Fit the GP to training data."""
+    def fit(self, X: np.ndarray, y: np.ndarray, optimize: bool = True, n_restarts: int = 3,
+            use_grid_search: bool = False, param_grids: Dict = None, max_grid_combinations: int = 5000,
+            validation_X: np.ndarray = None, validation_y: np.ndarray = None,
+            y_scaler: object = None):
+        """Fit the GP to training data.
+
+        Args:
+            X: Training inputs (N x D)
+            y: Training outputs (N,)
+            optimize: Whether to optimize hyperparameters
+            n_restarts: Number of restarts for gradient-based optimization (ignored if use_grid_search=True)
+            use_grid_search: If True, use grid search instead of gradient-based optimization
+            param_grids: Custom parameter grids for grid search (optional)
+            max_grid_combinations: Maximum number of grid combinations before random sampling
+            validation_X: Validation inputs for grid search evaluation (optional)
+            validation_y: Validation outputs for grid search evaluation (optional)
+            y_scaler: Scaler for denormalizing predictions (optional)
+        """
         self.X_train = X.copy()
         self.y_train = y.copy()
 
         if optimize:
-            self._optimize_hyperparameters(n_restarts)
+            if use_grid_search:
+                self._grid_search_hyperparameters(param_grids, max_grid_combinations, validation_X, validation_y, y_scaler)
+            else:
+                self._optimize_hyperparameters(n_restarts)
 
         # Compute kernel matrix and its inverse
         K = self.kernel(self.X_train)
-        K += self.noise_variance * np.eye(K.shape[0])
+        # Add noise variance (0 for pure GP) + small jitter for numerical stability
+        K += (self.noise_variance + 1e-10) * np.eye(K.shape[0])
 
         # Cholesky decomposition for stable inversion
         try:
@@ -604,6 +629,193 @@ class GaussianProcessRegressor:
             return mean, std
 
         return mean
+
+    def _grid_search_hyperparameters(self, param_grids: Dict = None, max_combinations: int = 5000,
+                                     validation_X: np.ndarray = None, validation_y: np.ndarray = None,
+                                     y_scaler: object = None):
+        """Grid search for kernel hyperparameters.
+
+        Args:
+            param_grids: Dictionary mapping parameter names to grid values.
+                        If None, uses default grids based on kernel bounds.
+            max_combinations: Maximum number of combinations to try. If exceeded, uses random sampling.
+            validation_X: Validation inputs for error-based evaluation (optional)
+            validation_y: Validation outputs for error-based evaluation (optional)
+            y_scaler: Scaler for denormalizing predictions to original scale (optional)
+        """
+        from itertools import product
+
+        # Determine evaluation method
+        use_validation = validation_X is not None and validation_y is not None
+
+        if use_validation:
+            if y_scaler is not None:
+                print(f"  Grid search: Using validation data (N={len(validation_y)}) for error-based evaluation (original scale)")
+            else:
+                print(f"  Grid search: Using validation data (N={len(validation_y)}) for error-based evaluation (normalized scale)")
+        else:
+            print(f"  Grid search: Using log marginal likelihood for evaluation")
+
+        def compute_evaluation_metric(params):
+            """Compute evaluation metric (validation RMSE if available, otherwise NLL).
+
+            Note: Only kernel parameters are optimized. Noise variance is fixed.
+            """
+            self.kernel.set_params(params)
+            # Use fixed noise variance (0 for pure GP) + small jitter for numerical stability
+
+            K = self.kernel(self.X_train)
+            K += (self.noise_variance) * np.eye(K.shape[0])
+
+            try:
+                L = np.linalg.cholesky(K)
+                alpha = np.linalg.solve(L, self.y_train)
+                alpha = np.linalg.solve(L.T, alpha)
+
+                if use_validation:
+                    # Use validation error as metric
+                    # Compute predictions on validation data
+                    K_star = self.kernel(validation_X, self.X_train)
+                    y_pred = K_star @ alpha
+
+                    # Denormalize predictions if scaler is provided
+                    # NOTE: validation_y is already in original scale (not normalized)
+                    if y_scaler is not None:
+                        # Convert predictions to original scale
+                        y_pred_original = y_scaler.inverse_transform(y_pred.reshape(-1, 1)).ravel()
+                        # validation_y is already in original scale, use as-is
+                        y_val_original = validation_y
+                        # Root mean squared error in original scale
+                        rmse = np.sqrt(np.mean((y_val_original - y_pred_original) ** 2))
+                    else:
+                        # Both in same scale, compute RMSE directly
+                        rmse = np.sqrt(np.mean((validation_y - y_pred) ** 2))
+                    return rmse
+                else:
+                    # Use negative log marginal likelihood
+                    nll = 0.5 * (self.y_train @ alpha)
+                    nll += np.sum(np.log(np.diag(L)))
+                    nll += 0.5 * len(self.y_train) * np.log(2 * np.pi)
+                    return nll
+            except np.linalg.LinAlgError:
+                return 1e10
+
+        # Get default grids if not provided
+        if param_grids is None:
+            param_grids = self._get_default_param_grids()
+
+        # NOTE: Noise variance is NOT included in grid search (fixed at initial value)
+        # This reduces the search space and prevents overfitting to noise characteristics
+        print(f"  Noise variance: {self.noise_variance:.3e} (fixed, not optimized)")
+
+        # Extract kernel parameter grids
+        kernel_param_names = []
+        kernel_param_grids = []
+
+        # Get parameter names from kernel
+        current_params = self.kernel.get_params()
+
+        # Determine metric name
+        metric_name = "RMSE" if use_validation else "NLL"
+
+        # Diagnostic: Evaluate initial parameters before grid search
+        if use_validation:
+            initial_metric = compute_evaluation_metric(current_params)
+            print(f"  Initial (pre-grid-search) {metric_name}: {initial_metric:.6e}")
+            print(f"  Initial params: {current_params}, noise: {self.noise_variance:.3e} (fixed)")
+
+        for i, (low, high) in enumerate(self.kernel.bounds):
+            param_name = f'param_{i}'
+            if param_name in param_grids:
+                grid = param_grids[param_name]
+            else:
+                # Create default grid based on bounds - 30 points for better coverage
+                if low > 0 and high / low > 100:  # Log scale for large ranges
+                    grid = np.logspace(np.log10(low), np.log10(high), 30)
+                else:
+                    grid = np.linspace(low, high, 30)
+            kernel_param_names.append(param_name)
+            kernel_param_grids.append(grid)
+
+        # Generate all combinations (kernel parameters only, no noise variance)
+        all_combinations = list(product(*kernel_param_grids))
+        n_combinations = len(all_combinations)
+
+        print(f"  Grid search: {n_combinations} combinations to evaluate...")
+
+        # If too many combinations, use random sampling
+        if n_combinations > max_combinations:
+            print(f"  Too many combinations ({n_combinations}), randomly sampling {max_combinations}...")
+            import random
+            random.seed(42)  # Set seed for reproducibility
+            all_combinations = random.sample(all_combinations, max_combinations)
+            n_combinations = max_combinations
+
+        # Evaluate all combinations
+        best_params = None
+        best_metric = np.inf
+
+        for i, combination in enumerate(all_combinations):
+            kernel_params = np.array(combination)
+
+            metric = compute_evaluation_metric(kernel_params)
+
+            if metric < best_metric:
+                best_metric = metric
+                best_params = kernel_params
+
+            # Progress reporting
+            if (i + 1) % max(1, n_combinations // 10) == 0:
+                print(f"    Progress: {i+1}/{n_combinations} ({100*(i+1)/n_combinations:.1f}%), best {metric_name}: {best_metric:.6e}")
+
+        # Set optimal parameters
+        self.kernel.set_params(best_params)
+        # Noise variance remains fixed (not changed by grid search)
+
+        print(f"  Grid search complete. Best {metric_name}: {best_metric:.6e}")
+        print(f"  Optimal params: {best_params}, noise: {self.noise_variance:.3e} (fixed)")
+
+        # Diagnostic: Compute training error with optimal parameters for comparison
+        if use_validation:
+            K = self.kernel(self.X_train)
+            K += (self.noise_variance + 1e-10) * np.eye(K.shape[0])
+            try:
+                L = np.linalg.cholesky(K)
+                alpha = np.linalg.solve(L, self.y_train)
+                alpha = np.linalg.solve(L.T, alpha)
+
+                # Training error
+                y_train_pred = K @ alpha
+                if y_scaler is not None:
+                    y_train_pred_orig = y_scaler.inverse_transform(y_train_pred.reshape(-1, 1)).ravel()
+                    y_train_orig = y_scaler.inverse_transform(self.y_train.reshape(-1, 1)).ravel()
+                    train_rmse = np.sqrt(np.mean((y_train_orig - y_train_pred_orig) ** 2))
+                else:
+                    train_rmse = np.sqrt(np.mean((self.y_train - y_train_pred) ** 2))
+
+                print(f"  Training RMSE: {train_rmse:.6e}, Validation RMSE: {best_metric:.6e}")
+                if best_metric > train_rmse * 1.5:
+                    print(f"  WARNING: Validation RMSE is {best_metric/train_rmse:.2f}x higher than training RMSE")
+                    print(f"           This may indicate poor generalization or data mismatch")
+            except:
+                pass
+
+    def _get_default_param_grids(self) -> Dict:
+        """Get default parameter grids based on kernel type and bounds.
+
+        Note: Noise variance is NOT included in grid search (kept fixed).
+        """
+        grids = {}
+
+        # Kernel-specific grids based on bounds - 20 points for better coverage
+        for i, (low, high) in enumerate(self.kernel.bounds):
+            param_name = f'param_{i}'
+            if low > 0 and high / low > 100:  # Log scale for large ranges
+                grids[param_name] = np.logspace(np.log10(low), np.log10(high), 30)
+            else:
+                grids[param_name] = np.linspace(low, high, 30)
+
+        return grids
 
     def _optimize_hyperparameters(self, n_restarts: int):
         """Optimize kernel hyperparameters by maximizing log marginal likelihood."""
@@ -713,10 +925,13 @@ def run_frequency_response(mat_files: List[str], output_dir: Path, n_files: int 
     """Run frequency_response.py and return path to output CSV."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Convert mat_files to absolute paths as strings
+    mat_files_str = [str(Path(f).resolve()) for f in mat_files]
+
     cmd = [
         sys.executable,
         'src/frequency_response.py',
-        *mat_files,
+        *mat_files_str,
         '--n-files', str(n_files),
         '--out-dir', str(output_dir),
         '--out-prefix', 'unified',
@@ -744,10 +959,13 @@ def run_fourier_transform(mat_files: List[str], output_dir: Path, n_files: int =
     """Run fourier_transform.py and return path to output CSV."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Convert mat_files to absolute paths as strings
+    mat_files_str = [str(Path(f).resolve()) for f in mat_files]
+
     cmd = [
         sys.executable,
         'src/fourier_transform.py',
-        *mat_files,
+        *mat_files_str,
         '--out-dir', str(output_dir),
         '--out-prefix', 'unified',
         '--nd', str(nd)
@@ -777,6 +995,26 @@ def run_fourier_transform(mat_files: List[str], output_dir: Path, n_files: int =
 # Visualization Functions
 # =====================
 
+def configure_plot_style():
+    """Configure matplotlib style for consistent, larger labels and captions."""
+    plt.rcParams.update({
+        'font.size': 22,           # Base font size
+        'axes.labelsize': 30,      # X and Y label size
+        'axes.titlesize': 32,      # Title size
+        'xtick.labelsize': 22,     # X tick label size
+        'ytick.labelsize': 22,     # Y tick label size
+        'legend.fontsize': 24,     # Legend font size
+        'figure.titlesize': 34,    # Figure title size
+        'lines.linewidth': 3.5,    # Line width
+        'lines.markersize': 12,    # Marker size
+        'axes.linewidth': 2.5,     # Axes line width
+        'grid.linewidth': 1.5,     # Grid line width
+        'xtick.major.width': 2.5,  # X tick width
+        'ytick.major.width': 2.5,  # Y tick width
+        'xtick.major.size': 10,    # X tick length
+        'ytick.major.size': 10,    # Y tick length
+    })
+
 def plot_gp_results(omega: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray,
                    y_std: Optional[np.ndarray], title: str, output_path: Path):
     """Plot GP regression results."""
@@ -790,12 +1028,25 @@ def plot_gp_results(omega: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray,
 
 def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
                    G_std_real: Optional[np.ndarray], G_std_imag: Optional[np.ndarray],
-                   output_prefix: Path):
-    """Plot complex-valued GP results (Nyquist only)."""
+                   output_prefix: Path, save_eps: bool = True):
+    """Plot complex-valued GP results (Nyquist only).
+
+    Args:
+        omega: Angular frequencies
+        G_true: True complex transfer function
+        G_pred: Predicted complex transfer function
+        G_std_real: Standard deviation of real part
+        G_std_imag: Standard deviation of imaginary part
+        output_prefix: Output file prefix (without extension)
+        save_eps: If True, save EPS files in addition to PNG (default: True)
+    """
+    # Configure plot style for consistent appearance
+    configure_plot_style()
+
     # Nyquist plot only
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.plot(np.real(G_true), np.imag(G_true), 'k.', markersize=8, label='Measured', alpha=0.6)
-    ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=2, label='GP mean')
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.plot(np.real(G_true), np.imag(G_true), 'k.', markersize=14, label='Measured', alpha=0.6)
+    ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=4.0, label='GP mean')
 
     if G_std_real is not None and G_std_imag is not None:
         # Plot confidence ellipses at selected frequencies
@@ -805,17 +1056,101 @@ def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
             theta = np.linspace(0, 2*np.pi, 100)
             ellipse_x = np.real(G_pred[i]) + 2*G_std_real[i] * np.cos(theta)
             ellipse_y = np.imag(G_pred[i]) + 2*G_std_imag[i] * np.sin(theta)
-            ax.plot(ellipse_x, ellipse_y, 'r-', alpha=0.2, linewidth=0.5)
+            ax.plot(ellipse_x, ellipse_y, 'r-', alpha=0.2, linewidth=1.0)
 
-    ax.set_xlabel('Real{G(jω)}')
-    ax.set_ylabel('Imag{G(jω)}')
-    ax.set_title('Nyquist Plot with GP Regression')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel('Real{G(jω)}', fontsize=32, fontweight='bold')
+    ax.set_ylabel('Imag{G(jω)}', fontsize=32, fontweight='bold')
+    ax.set_title('Nyquist Plot with GP Regression', fontsize=36, fontweight='bold', pad=20)
+    ax.legend(fontsize=26, framealpha=0.9, edgecolor='black', loc='best')
+    ax.grid(True, alpha=0.3, linewidth=1.5)
     ax.axis('equal')
+    ax.tick_params(labelsize=24, width=2.5, length=10)
     plt.tight_layout()
-    plt.savefig(str(output_prefix) + '_nyquist_gp.png', dpi=150)
+
+    # Save PNG
+    png_path = str(output_prefix) + '_nyquist_gp.png'
+    plt.savefig(png_path, dpi=300, bbox_inches='tight')
+
+    # Save EPS
+    if save_eps:
+        eps_path = str(output_prefix) + '_nyquist_gp.eps'
+        plt.savefig(eps_path, format='eps', bbox_inches='tight')
+
     plt.close(fig)
+
+
+# =====================
+# Validation Data Generation
+# =====================
+
+def generate_validation_data_from_mat(mat_file: str, nd: int = 200, freq_method: str = 'frf') -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate validation data from test.mat file for grid search evaluation.
+
+    This function always returns raw (non-normalized) data. Normalization should be
+    handled separately during GP training and prediction.
+
+    Args:
+        mat_file: Path to the .mat file
+        nd: Number of frequency points to generate
+        freq_method: Frequency analysis method ('frf' or 'fourier')
+
+    Returns:
+        Tuple of (omega, G_real, G_imag) where:
+            omega: Angular frequencies (nd,) - raw scale
+            G_real: Real part of transfer function (nd,) - raw scale
+            G_imag: Imaginary part of transfer function (nd,) - raw scale
+    """
+    import sys
+    from pathlib import Path
+
+    # Import necessary functions from frequency_response.py
+    sys.path.insert(0, str(Path(__file__).parent))
+    from frequency_response import (
+        load_time_u_y, synchronous_coefficients_trapz,
+        frf_cross_power_average, matlab_freq_grid
+    )
+
+    # Convert to absolute path
+    mat_file_path = Path(mat_file).resolve()
+    print(f"  Generating validation data from {mat_file_path}...")
+
+    # Load time-series data from mat file (FULL DURATION)
+    t, u, y = load_time_u_y(mat_file_path, y_col=0)
+
+    # Generate frequency grid
+    if freq_method == 'frf':
+        # Log-scale frequency grid (FRF method)
+        _, omega = matlab_freq_grid(nd, f_low_log10=-1.0, f_up_log10=2.3)
+    else:
+        # Linear frequency grid (Fourier method)
+        # Use same approach as fourier_transform.py
+        dt = np.median(np.diff(t))
+        fs = 1.0 / dt
+        freqs = np.fft.rfftfreq(len(t), dt)
+        omega = 2.0 * np.pi * freqs[:nd]
+
+    # Compute synchronous demodulation coefficients
+    subtract_mean = True
+    drop_seconds = 0.0  # Use all data from start
+
+    U = synchronous_coefficients_trapz(t, u, omega, drop_seconds, subtract_mean)
+    Y = synchronous_coefficients_trapz(t, y, omega, drop_seconds, subtract_mean)
+
+    # Compute FRF using cross-power average (for single file, this is just Y/U)
+    G = frf_cross_power_average([U], [Y])
+
+    # Extract real and imaginary parts
+    G_real = np.real(G)
+    G_imag = np.imag(G)
+
+    # Detailed output for verification
+    time_duration = t[-1] - t[0]
+    print(f"  Validation data generated: {nd} frequency points")
+    print(f"  Time data: {len(t)} samples, duration={time_duration:.1f}s (FULL)")
+    print(f"  Frequency range: {omega[0]/(2*np.pi):.3f} - {omega[-1]/(2*np.pi):.3f} Hz")
+    print(f"  NOTE: This is the SAME data used for FIR model time-domain evaluation")
+
+    return omega, G_real, G_imag
 
 
 # =====================
@@ -831,14 +1166,65 @@ def run_gp_pipeline(config: argparse.Namespace):
     if config.use_existing:
         print(f"Using existing frequency data from: {config.use_existing}")
         freq_csv = Path(config.use_existing)
+
+        # Warning: Cannot verify training/test separation with existing CSV
+        if config.fir_validation_mat is not None:
+            print(f"\n{'='*70}")
+            print(f"WARNING: Using existing CSV - cannot verify training/test data separation")
+            print(f"  Please ensure training data does not include: {config.fir_validation_mat}")
+            print(f"{'='*70}\n")
     else:
+        # Ensure test data file is excluded from training data
+        training_mat_files = config.mat_files.copy() if isinstance(config.mat_files, list) else config.mat_files
+
+        if config.fir_validation_mat is not None:
+            validation_mat_path = Path(config.fir_validation_mat).resolve()
+
+            # Filter out validation file from training files
+            if isinstance(training_mat_files, list):
+                original_count = len(training_mat_files)
+                training_mat_files = [
+                    f for f in training_mat_files
+                    if Path(f).resolve() != validation_mat_path
+                ]
+                excluded_count = original_count - len(training_mat_files)
+
+                if excluded_count > 0:
+                    print(f"\n{'='*70}")
+                    print(f"DATA SEPARATION: Excluded {excluded_count} file(s) from training data")
+                    print(f"  Validation file: {validation_mat_path}")
+                    print(f"  Training files remaining: {len(training_mat_files)}")
+                    print(f"{'='*70}\n")
+
+                if len(training_mat_files) == 0:
+                    error_msg = (
+                        f"\n{'='*70}\n"
+                        f"ERROR: Training and test data cannot use the same file!\n"
+                        f"{'='*70}\n"
+                        f"  Test file: {validation_mat_path.name}\n"
+                        f"  Training files: {[Path(f).name for f in config.mat_files]}\n"
+                        f"\n"
+                        f"Solutions:\n"
+                        f"  1. Use DIFFERENT files for training and testing:\n"
+                        f"     - Training: input/input_test_20250912_*.mat\n"
+                        f"     - Testing:  input/input_test_20250913_*.mat\n"
+                        f"\n"
+                        f"  2. Or use multiple files and exclude one for testing:\n"
+                        f"     python src/unified_pipeline.py input/*.mat \\\n"
+                        f"       --fir-validation-mat input/input_test_20250913_010037.mat\n"
+                        f"\n"
+                        f"This ensures proper train/test split for valid evaluation.\n"
+                        f"{'='*70}\n"
+                    )
+                    raise ValueError(error_msg)
+
         # Choose frequency analysis method
         if hasattr(config, 'freq_method') and config.freq_method == 'fourier':
             print("Running Fourier transform analysis...")
-            freq_csv = run_fourier_transform(config.mat_files, output_dir, config.n_files, config.time_duration, config.nd)
+            freq_csv = run_fourier_transform(training_mat_files, output_dir, config.n_files, config.time_duration, config.nd)
         else:
             print("Running frequency response function (FRF) analysis...")
-            freq_csv = run_frequency_response(config.mat_files, output_dir, config.n_files, config.time_duration, config.nd)
+            freq_csv = run_frequency_response(training_mat_files, output_dir, config.n_files, config.time_duration, config.nd)
 
     # Step 2: Load frequency domain data
     print("Loading frequency domain data...")
@@ -881,7 +1267,12 @@ def run_gp_pipeline(config: argparse.Namespace):
                     print(f"Warning: Validation MAT file not found: {validation_mat}")
                     validation_mat = None
                 else:
-                    print(f"  FIR validation file: {validation_mat}")
+                    print(f"\n" + "="*70)
+                    print(f"FIR MODEL VALIDATION DATA")
+                    print(f"="*70)
+                    print(f"  Validation file: {validation_mat}")
+                    print(f"  NOTE: Time-domain RMSE will be computed using FULL duration")
+                    print(f"="*70)
 
             # Create a prediction function for the estimator
             def estimator_predict_at_omega(omega_new):
@@ -1059,10 +1450,77 @@ def run_gp_pipeline(config: argparse.Namespace):
             y_real = np.real(G_complex)
             y_imag = np.imag(G_complex)
 
+        # Generate validation data if available and grid search is enabled
+        use_grid_search = getattr(config, 'use_grid_search', False)
+        validation_X_real = None
+        validation_y_real = None
+        validation_X_imag = None
+        validation_y_imag = None
+
+        if use_grid_search and hasattr(config, 'fir_validation_mat') and config.fir_validation_mat is not None:
+            print(f"\n" + "="*70)
+            print(f"GRID SEARCH VALIDATION DATA (TEST DATA)")
+            print(f"="*70)
+            print(f"  Test/Validation file: {config.fir_validation_mat}")
+            print(f"  Test data points: 200 (fixed, independent of training nd={config.nd})")
+            print(f"  NOTE: This file is EXCLUDED from training data")
+            print(f"  NOTE: This is the same file used for FIR model evaluation")
+            print(f"="*70)
+            try:
+                # Generate validation data from FIR validation mat file
+                # Use 200 points for grid search validation (higher resolution than training)
+                # Note: Different mat files → different G(jω) values
+                # Validation data is always returned in raw (non-normalized) scale
+                nd_validation = 150  # Fixed at 150 points for grid search validation
+                omega_val, G_real_val, G_imag_val = generate_validation_data_from_mat(
+                    config.fir_validation_mat,
+                    nd=nd_validation,
+                    freq_method=getattr(config, 'freq_method', 'frf'),
+                )
+
+                # Prepare validation inputs (same transformation as training data)
+                if config.log_frequency:
+                    X_val = np.log10(omega_val).reshape(-1, 1)
+                else:
+                    X_val = omega_val.reshape(-1, 1)
+
+                # Prepare validation data for grid search evaluation
+                # IMPORTANT: Validation data (omega_val, G_real_val, G_imag_val) is in RAW scale
+                if config.normalize:
+                    # Normalize X using the SAME scaler as training data
+                    # This is necessary because GP is trained in normalized X space
+                    validation_X_real = X_scaler.transform(X_val)
+                    validation_X_imag = X_scaler.transform(X_val)
+
+                    # Keep Y in RAW (original) scale - do NOT normalize
+                    # GP predictions will be denormalized before RMSE evaluation
+                    # This ensures: RMSE = ||y_pred_denormalized - y_test_raw||
+                    validation_y_real = G_real_val
+                    validation_y_imag = G_imag_val
+                else:
+                    # No normalization: use raw scale for both X and Y
+                    validation_X_real = X_val
+                    validation_y_real = G_real_val
+
+                    validation_X_imag = X_val
+                    validation_y_imag = G_imag_val
+
+                print(f"  Validation data prepared: {len(validation_y_real)} points")
+            except Exception as e:
+                print(f"  Warning: Could not load validation data: {e}")
+                print(f"  Proceeding with NLL-based grid search instead")
+
         # Fit real part
+        print("\nFitting GP for Real part...")
         gp_real = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                          noise_variance=config.noise_variance)
-        gp_real.fit(X_gp_normalized, y_real, optimize=config.optimize, n_restarts=config.n_restarts)
+        max_grid_combinations = getattr(config, 'grid_search_max_combinations', 5000)
+        # Pass y_scaler for original-scale RMSE evaluation
+        y_scaler_real = y_real_scaler if config.normalize else None
+        gp_real.fit(X_gp_normalized, y_real, optimize=config.optimize, n_restarts=config.n_restarts,
+                   use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations,
+                   validation_X=validation_X_real, validation_y=validation_y_real,
+                   y_scaler=y_scaler_real)
 
         y_real_pred, y_real_std = gp_real.predict(X_gp_normalized, return_std=True)
 
@@ -1074,9 +1532,15 @@ def run_gp_pipeline(config: argparse.Namespace):
             y_real_orig = y_real
 
         # Fit imaginary part
+        print("\nFitting GP for Imaginary part...")
         gp_imag = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                          noise_variance=config.noise_variance)
-        gp_imag.fit(X_gp_normalized, y_imag, optimize=config.optimize, n_restarts=config.n_restarts)
+        # Pass y_scaler for original-scale RMSE evaluation
+        y_scaler_imag = y_imag_scaler if config.normalize else None
+        gp_imag.fit(X_gp_normalized, y_imag, optimize=config.optimize, n_restarts=config.n_restarts,
+                   use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations,
+                   validation_X=validation_X_imag, validation_y=validation_y_imag,
+                   y_scaler=y_scaler_imag)
 
         y_imag_pred, y_imag_std = gp_imag.predict(X_gp_normalized, return_std=True)
 
@@ -1134,7 +1598,10 @@ def run_gp_pipeline(config: argparse.Namespace):
         # Fit magnitude (in log scale)
         gp_mag = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                         noise_variance=config.noise_variance)
-        gp_mag.fit(X_gp_normalized, y_mag, optimize=config.optimize, n_restarts=config.n_restarts)
+        use_grid_search = getattr(config, 'use_grid_search', False)
+        max_grid_combinations = getattr(config, 'grid_search_max_combinations', 5000)
+        gp_mag.fit(X_gp_normalized, y_mag, optimize=config.optimize, n_restarts=config.n_restarts,
+                  use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations)
 
         y_mag_pred, y_mag_std = gp_mag.predict(X_gp_normalized, return_std=True)
 
@@ -1147,7 +1614,8 @@ def run_gp_pipeline(config: argparse.Namespace):
         # Fit phase
         gp_phase = GaussianProcessRegressor(kernel=create_kernel(config.kernel, **kernel_params),
                                           noise_variance=config.noise_variance)
-        gp_phase.fit(X_gp_normalized, y_phase, optimize=config.optimize, n_restarts=config.n_restarts)
+        gp_phase.fit(X_gp_normalized, y_phase, optimize=config.optimize, n_restarts=config.n_restarts,
+                    use_grid_search=use_grid_search, max_grid_combinations=max_grid_combinations)
 
         y_phase_pred, y_phase_std = gp_phase.predict(X_gp_normalized, return_std=True)
 
@@ -1208,7 +1676,13 @@ def run_gp_pipeline(config: argparse.Namespace):
                 print(f"Warning: Validation MAT file not found: {validation_mat}")
                 validation_mat = None
             else:
-                print(f"  FIR validation file: {validation_mat}")
+                print(f"\n" + "="*70)
+                print(f"FIR MODEL VALIDATION DATA")
+                print(f"="*70)
+                print(f"  Validation file: {validation_mat}")
+                print(f"  NOTE: This is the SAME file used for grid search validation")
+                print(f"  NOTE: Time-domain RMSE will be computed using FULL duration")
+                print(f"="*70)
 
         # Create a GP prediction function for better interpolation
         def gp_predict_at_omega(omega_new):
@@ -1471,7 +1945,13 @@ def main():
     parser.add_argument('--no-optimize', dest='optimize', action='store_false',
                       help='Disable hyperparameter optimization')
     parser.add_argument('--n-restarts', type=int, default=3,
-                      help='Number of optimization restarts (default: 3)')
+                      help='Number of optimization restarts for gradient-based optimization (default: 3)')
+    parser.add_argument('--grid-search', action='store_true',
+                      help='Use grid search instead of gradient-based optimization for hyperparameter tuning')
+    parser.add_argument('--grid-search-max-combinations', type=int, default=5000,
+                      help='Maximum number of grid combinations before random sampling (default: 5000)')
+    parser.add_argument('--validation-mat', type=str, default=None,
+                      help='[DEPRECATED] Use --fir-validation-mat instead for grid search validation')
 
     # Classical/ML method options
     parser.add_argument('--n-numerator', type=int, default=2,
@@ -1489,7 +1969,7 @@ def main():
     parser.add_argument('--fir-length', type=int, default=1024,
                       help='FIR filter length (default: 1024)')
     parser.add_argument('--fir-validation-mat', type=str, default=None,
-                      help='MAT file with [time, output, input] for FIR validation')
+                      help='MAT file with [time, output, input] for FIR validation AND GP grid search validation')
 
     args = parser.parse_args()
 
@@ -1508,6 +1988,14 @@ def main():
 
     # Add method info to args
     args.is_gp = args.method == 'gp'
+
+    # Add grid search info to args (make it accessible as use_grid_search)
+    args.use_grid_search = args.grid_search
+
+    # Backward compatibility: if --validation-mat is used, copy to fir_validation_mat
+    if args.validation_mat is not None and args.fir_validation_mat is None:
+        print("Warning: --validation-mat is deprecated. Use --fir-validation-mat instead.")
+        args.fir_validation_mat = args.validation_mat
 
     # Run pipeline
     run_gp_pipeline(args)
@@ -1615,17 +2103,19 @@ def run_unified_system_identification(omega: np.ndarray, G_complex: np.ndarray,
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Nyquist plot only (as per user request - no Bode, no real/imag plots)
-        fig, ax = plt.subplots(figsize=(8, 8))
-        ax.plot(np.real(G_complex), np.imag(G_complex), 'k.', markersize=8, label='Measured', alpha=0.6)
-        ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=2, label=f'{method.upper()} fit')
-        ax.set_xlabel('Real{G(jω)}')
-        ax.set_ylabel('Imag{G(jω)}')
-        ax.set_title(f'Nyquist Plot - {method.upper()} (RMSE={rmse:.3e})')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        configure_plot_style()
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.plot(np.real(G_complex), np.imag(G_complex), 'k.', markersize=14, label='Measured', alpha=0.6)
+        ax.plot(np.real(G_pred), np.imag(G_pred), 'r-', linewidth=4.0, label=f'{method.upper()} fit')
+        ax.set_xlabel('Real{G(jω)}', fontsize=32, fontweight='bold')
+        ax.set_ylabel('Imag{G(jω)}', fontsize=32, fontweight='bold')
+        ax.set_title(f'Nyquist Plot - {method.upper()} (RMSE={rmse:.3e})', fontsize=36, fontweight='bold', pad=20)
+        ax.legend(fontsize=26, framealpha=0.9, edgecolor='black', loc='best')
+        ax.grid(True, alpha=0.3, linewidth=1.5)
         ax.axis('equal')
+        ax.tick_params(labelsize=24, width=2.5, length=10)
         plt.tight_layout()
-        plt.savefig(output_dir / f'{method}_complex_nyquist.png', dpi=300)
+        plt.savefig(output_dir / f'{method}_complex_nyquist.png', dpi=300, bbox_inches='tight')
         plt.close()
 
         # Results stored internally (no JSON/CSV output as per user request)
@@ -1694,7 +2184,8 @@ def save_results_to_csv(result_entry: Dict, output_base_dir: Path, timestamp: st
 
 def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_output',
                           fir_validation_mat: Optional[str] = None, nd_values: List[int] = None,
-                          freq_method: str = 'frf'):
+                          freq_method: str = 'frf', use_grid_search: bool = False,
+                          grid_search_max_combinations: int = 5000):
     """
     Run comprehensive tests with different kernels, time intervals, file counts, and nd values.
     Save overall RMSE results in CSV format incrementally after each test.
@@ -1711,25 +2202,47 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
     # Test configurations
     # GP kernels
-    kernels = ['rbf', 'matern', 'matern12', 'matern32', 'matern52', 'rq', 'exp', 'tc', 'dc', 'di',
-               'ss1', 'ss2', 'sshf', 'stable_spline']
-    # Classical and ML methods
-    classical_methods = ['nls', 'ls', 'iwls', 'tls', 'ml', 'log', 'lpm']
-    ml_methods = ['rf', 'gbr', 'svm']
+    # kernels = ['rbf', 'matern', 'matern12', 'matern32', 'matern52', 'rq', 'exp', 'tc', 'dc', 'di',
+    #            'ss1', 'ss2', 'sshf', 'stable_spline']
+    kernels = [ 'matern52']
+    # Classical methods
+    classical_methods = ['nls', 'ls']
 
     # Combine all methods
-    all_methods = ['gp_' + k for k in kernels] + classical_methods + ml_methods
+    all_methods = ['gp_' + k for k in kernels] + classical_methods
     # all_methods = classical_methods + ml_methods
 
     # Set default nd values if not provided
     if nd_values is None:
         nd_values = [10, 30, 50, 100]
 
-    time_durations = [10.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 2700.0, None]  # seconds, None means use all data
-    n_files_list = [1, 2, 5, 10]  # None means use all files
+    time_durations = [600.0, 1800.0, None]  # seconds, None means use all data
+    n_files_list = [1, 10]  # None means use all files
 
     # Sort MAT files to ensure consistent order across all tests
     mat_files = sorted(mat_files)
+
+    # CRITICAL: Exclude validation file from training files
+    training_files = mat_files.copy()
+    if fir_validation_mat is not None:
+        validation_mat_path = Path(fir_validation_mat).resolve()
+        training_files = [
+            f for f in training_files
+            if Path(f).resolve() != validation_mat_path
+        ]
+        print("=" * 80)
+        print("TRAIN/TEST DATA SEPARATION")
+        print("=" * 80)
+        print(f"Total MAT files available: {len(mat_files)}")
+        print(f"Test file (EXCLUDED from training): {fir_validation_mat}")
+        print(f"Training files available: {len(training_files)}")
+        print("=" * 80)
+        print()
+
+        if len(training_files) == 0:
+            print("ERROR: No training files remaining after excluding test file!")
+            print("Need at least 2 MAT files for proper train/test split.")
+            return
 
     # Results storage
     all_results = []
@@ -1738,13 +2251,11 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
     print("=" * 80)
     print("Starting Comprehensive System Identification Testing Suite")
     print(f"Timestamp: {timestamp}")
-    print(f"Total MAT files available: {len(mat_files)}")
-    print(f"MAT files (sorted for consistency):")
-    for i, f in enumerate(mat_files, 1):
+    print(f"Training files (sorted for consistency):")
+    for i, f in enumerate(training_files, 1):
         print(f"  [{i}] {f}")
     print(f"GP Kernels: {', '.join(kernels)}")
     print(f"Classical methods: {', '.join(classical_methods)}")
-    print(f"ML methods: {', '.join(ml_methods)}")
     print(f"Time durations: {time_durations}")
     print(f"File counts: {n_files_list}")
     print(f"Frequency points (nd): {nd_values}")
@@ -1769,10 +2280,10 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
         for nd in nd_values:
             # For each number of files
             for n_files in n_files_list:
-                if n_files is not None and n_files > len(mat_files):
+                if n_files is not None and n_files > len(training_files):
                     continue  # Skip if requesting more files than available
 
-                actual_n_files = n_files if n_files is not None else len(mat_files)
+                actual_n_files = n_files if n_files is not None else len(training_files)
 
                 # For n_files = 1, test different time durations
                 if n_files == 1:
@@ -1787,25 +2298,25 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
                         print(f"\nTest: {test_name}")
                         print(f"  Method: {method}")
-                        print(f"  Input data: {mat_files[0]}")
-                        print(f"  FIR validation: {fir_validation_mat}")
+                        print(f"  Training data: {training_files[0]}")
+                        print(f"  Test data (FIR validation): {fir_validation_mat}")
                         print(f"  Duration: {time_str}")
                         print(f"  nd: {nd}")
 
                         try:
                             # Create argparse-like namespace
                             config = argparse.Namespace(
-                                mat_files=mat_files[:1],
+                                mat_files=training_files[:1],
                                 use_existing=None,
                                 n_files=1,
                                 time_duration=time_duration,
                                 kernel=kernel if is_gp else 'rbf',  # Default kernel for GP
                                 nu=2.5 if kernel == 'matern' else None,
                                 gp_mode='separate',
-                                noise_variance=1e-6,
+                                noise_variance=0.0,  # Pure GP regression (no noise assumption)
                                 normalize=True,
                                 log_frequency=True,
-                                optimize=False,
+                                optimize=use_grid_search,  # Enable optimization when grid search is used
                                 n_restarts=3,
                                 out_dir=str(output_dir),
                                 extract_fir=True,
@@ -1814,7 +2325,10 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                                 method=method,  # Add method type
                                 is_gp=is_gp,  # Flag for GP vs other methods
                                 nd=nd,  # Number of frequency points
-                                freq_method=freq_method  # Frequency analysis method
+                                freq_method=freq_method,  # Frequency analysis method
+                                use_grid_search=use_grid_search,  # Grid search flag
+                                grid_search_max_combinations=grid_search_max_combinations,  # Grid search max combinations
+                                validation_mat=fir_validation_mat  # Use same file for grid search validation
                             )
 
                             # Run the pipeline and get results directly
@@ -1915,31 +2429,31 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                     test_name = f"{method}_nd{nd}_{actual_n_files}files"
                     output_dir = Path(output_base_dir) / timestamp / test_name
 
-                    # List of files to use
-                    files_to_use = mat_files[:actual_n_files]
+                    # List of files to use (from TRAINING files, not all files)
+                    files_to_use = training_files[:actual_n_files]
 
                     print(f"\nTest: {test_name}")
                     print(f"  Method: {method}")
-                    print(f"  Input data ({actual_n_files} files):")
+                    print(f"  Training data ({actual_n_files} files):")
                     for i, f in enumerate(files_to_use, 1):
                         print(f"    [{i}] {f}")
-                    print(f"  FIR validation: {fir_validation_mat}")
+                    print(f"  Test data (FIR validation): {fir_validation_mat}")
                     print(f"  nd: {nd}")
 
                     try:
                         # Create argparse-like namespace
                         config = argparse.Namespace(
-                            mat_files=mat_files[:actual_n_files] if n_files is not None else mat_files,
+                            mat_files=training_files[:actual_n_files] if n_files is not None else training_files,
                             use_existing=None,
-                            n_files=n_files if n_files is not None else len(mat_files),
+                            n_files=n_files if n_files is not None else len(training_files),
                             time_duration=None,
                             kernel=kernel if is_gp else 'rbf',
                             nu=2.5 if kernel == 'matern' else None,
                             gp_mode='separate',
-                            noise_variance=1e-6,
+                            noise_variance=0.0,  # Pure GP regression (no noise assumption)
                             normalize=True,
                             log_frequency=True,
-                            optimize=False,
+                            optimize=use_grid_search,  # Enable optimization when grid search is used
                             n_restarts=3,
                             out_dir=str(output_dir),
                             extract_fir=True,
@@ -1948,7 +2462,10 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
                             method=method,
                             is_gp=is_gp,
                             nd=nd,
-                            freq_method=freq_method
+                            freq_method=freq_method,
+                            use_grid_search=use_grid_search,  # Grid search flag
+                            grid_search_max_combinations=grid_search_max_combinations,  # Grid search max combinations
+                            validation_mat=fir_validation_mat  # Use same file for grid search validation
                         )
 
                         # Run the pipeline and get results directly
@@ -2144,20 +2661,21 @@ if __name__ == "__main__":
 
         # Find validation MAT file for FIR model evaluation
         # This file will be used consistently across ALL tests for fair comparison
+        # IMPORTANT: Validation file must be EXCLUDED from training files
         validation_mat = None
-        for f in mat_files:
-            if 'test' in f.lower():
-                validation_mat = f
-                break
 
-        if not validation_mat:
-            # Use first file as validation if no test file found
-            validation_mat = mat_files[0]
-            print(f"⚠️  Warning: No test file found, using {validation_mat} for FIR validation")
+        # Try to use the last file as validation (to avoid overlap with training)
+        if len(mat_files) >= 2:
+            validation_mat = mat_files[-1]  # Use last file for testing
+            print(f"✓ Using LAST file for validation (test data): {validation_mat}")
+            print(f"✓ Training files will use first {len(mat_files)-1} files")
         else:
-            print(f"✓ Using validation file for FIR evaluation: {validation_mat}")
+            print(f"⚠️  ERROR: Need at least 2 MAT files for train/test split!")
+            print(f"   Found only {len(mat_files)} file(s)")
+            sys.exit(1)
 
-        print(f"ℹ️  NOTE: This validation file will be used consistently for ALL tests")
+        print(f"ℹ️  NOTE: This validation file will be EXCLUDED from training data")
+        print(f"ℹ️  NOTE: This ensures proper train/test separation")
         print()
 
         # Run comprehensive test with BOTH frequency methods
@@ -2171,7 +2689,9 @@ if __name__ == "__main__":
             mat_files,
             output_base_dir='test_output_frf',
             fir_validation_mat=validation_mat,
-            freq_method='frf'
+            freq_method='frf',
+            use_grid_search=True,
+            grid_search_max_combinations=500000
         )
 
         print("\n" + "=" * 80)
@@ -2179,32 +2699,34 @@ if __name__ == "__main__":
         print("=" * 80)
         print()
 
-        # Phase 2: Fourier (normal-scale) method
-        print("=" * 80)
-        print("PHASE 2: Testing with Fourier Transform (Normal-scale frequency analysis)")
-        print("=" * 80)
-        print()
+        # # Phase 2: Fourier (normal-scale) method
+        # print("=" * 80)
+        # print("PHASE 2: Testing with Fourier Transform (Normal-scale frequency analysis)")
+        # print("=" * 80)
+        # print()
 
-        run_comprehensive_test(
-            mat_files,
-            output_base_dir='test_output_fourier',
-            fir_validation_mat=validation_mat,
-            freq_method='fourier'
-        )
+        # run_comprehensive_test(
+        #     mat_files,
+        #     output_base_dir='test_output_fourier',
+        #     fir_validation_mat=validation_mat,
+        #     freq_method='fourier',
+        #     use_grid_search=True,
+        #     grid_search_max_combinations=5000
+        # )
 
-        print("\n" + "=" * 80)
-        print("PHASE 2 COMPLETED: Fourier tests finished")
-        print("=" * 80)
-        print()
+        # print("\n" + "=" * 80)
+        # print("PHASE 2 COMPLETED: Fourier tests finished")
+        # print("=" * 80)
+        # print()
 
-        print("=" * 80)
-        print("ALL COMPREHENSIVE TESTS COMPLETED!")
-        print("=" * 80)
-        print()
-        print("Results saved to:")
-        print("  - FRF method (log-scale):    test_output_frf/")
-        print("  - Fourier method (normal):   test_output_fourier/")
-        print("=" * 80)
+        # print("=" * 80)
+        # print("ALL COMPREHENSIVE TESTS COMPLETED!")
+        # print("=" * 80)
+        # print()
+        # print("Results saved to:")
+        # print("  - FRF method (log-scale):    test_output_frf/")
+        # print("  - Fourier method (normal):   test_output_fourier/")
+        # print("=" * 80)
     else:
         # Run normal pipeline
         main()

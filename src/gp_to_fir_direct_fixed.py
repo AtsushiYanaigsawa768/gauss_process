@@ -196,7 +196,8 @@ def plot_gp_fir_results_fixed(t: np.ndarray, y: np.ndarray,
                               y_pred: np.ndarray, u: np.ndarray,
                               rmse: float, fit_percent: float, r2: float,
                               output_dir: Path,
-                              prefix: str = "gp_fir_fixed"):
+                              prefix: str = "gp_fir_fixed",
+                              save_eps: bool = True):
     """
     Create visualization plots for GP-based FIR model results (fixed version).
     Shows output vs predicted and error plots.
@@ -211,53 +212,74 @@ def plot_gp_fir_results_fixed(t: np.ndarray, y: np.ndarray,
         r2: R-squared value
         output_dir: Directory to save plots
         prefix: Filename prefix
+        save_eps: If True, save EPS files in addition to PNG (default: True)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Figure 1: Output vs Predicted
-    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    fig1, ax1 = plt.subplots(figsize=(12, 8))
 
     # Show full time range or limit to reasonable duration
     t_max = min(t[-1], t[0] + 10)  # Show first 10 seconds
     mask = t <= t_max
 
-    ax1.plot(t[mask], y[mask], 'k-', label='Measured Output', linewidth=1.5, alpha=0.8)
-    ax1.plot(t[mask], y_pred[mask], 'r--', label='FIR Predicted', linewidth=1.5)
-    ax1.set_xlabel('Time [s]', fontsize=12)
-    ax1.set_ylabel('Output', fontsize=12)
+    ax1.plot(t[mask], y[mask], 'k-', label='Measured Output', linewidth=3.0, alpha=0.8)
+    ax1.plot(t[mask], y_pred[mask], 'r--', label='FIR Predicted', linewidth=3.0)
+    ax1.set_xlabel('Time [s]', fontsize=32, fontweight='bold')
+    ax1.set_ylabel('Output [rad]', fontsize=32, fontweight='bold')
 
     # Title without delay information
-    title = (f'FIR Model Validation (Corrected Method)\n'
-             f'RMSE={rmse:.3e}, FIT={fit_percent:.1f}%, R²={r2:.3f}')
-    ax1.set_title(title, fontsize=14)
+    title = (f'FIR Model Validation\n'
+             f'RMSE={rmse:.3e}')
+    ax1.set_title(title, fontsize=36, fontweight='bold', pad=20)
 
-    ax1.legend(fontsize=11)
-    ax1.grid(True, alpha=0.3)
+    ax1.legend(fontsize=26, framealpha=0.9, edgecolor='black')
+    ax1.grid(True, alpha=0.3, linewidth=1.5)
+    ax1.tick_params(labelsize=24, width=2.5, length=10)
 
     plt.tight_layout()
-    plt.savefig(output_dir / f"{prefix}_output_vs_predicted.png", dpi=150)
+
+    # Save PNG
+    png_path = output_dir / f"{prefix}_output_vs_predicted.png"
+    plt.savefig(png_path, dpi=300, bbox_inches='tight')
+
+    # Save EPS
+    if save_eps:
+        eps_path = output_dir / f"{prefix}_output_vs_predicted.eps"
+        plt.savefig(eps_path, format='eps', bbox_inches='tight')
+
     plt.close(fig1)
 
     # Figure 2: Error
-    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    fig2, ax2 = plt.subplots(figsize=(12, 8))
 
     error = y - y_pred
-    ax2.plot(t[mask], error[mask], 'b-', linewidth=1, alpha=0.8)
-    ax2.axhline(y=0, color='k', linestyle='--', alpha=0.5, linewidth=1)
-    ax2.set_xlabel('Time [s]', fontsize=12)
-    ax2.set_ylabel('Error (Measured - Predicted)', fontsize=12)
-    ax2.set_title('FIR Model Prediction Error', fontsize=14)
-    ax2.grid(True, alpha=0.3)
+    ax2.plot(t[mask], error[mask], 'b-', linewidth=3.0, alpha=0.8)
+    ax2.axhline(y=0, color='k', linestyle='--', alpha=0.5, linewidth=2.5)
+    ax2.set_xlabel('Time [s]', fontsize=32, fontweight='bold')
+    ax2.set_ylabel('Error (Measured - Predicted)', fontsize=32, fontweight='bold')
+    ax2.set_title('FIR Model Prediction Error', fontsize=36, fontweight='bold', pad=20)
+    ax2.grid(True, alpha=0.3, linewidth=1.5)
+    ax2.tick_params(labelsize=24, width=2.5, length=10)
 
     # Add error statistics text
     error_stats = (f'Mean Error: {np.mean(error[mask]):.3e}\n'
                    f'Std Error: {np.std(error[mask]):.3e}')
     ax2.text(0.02, 0.98, error_stats, transform=ax2.transAxes,
-             fontsize=10, verticalalignment='top',
-             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8))
+             fontsize=20, verticalalignment='top',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8, linewidth=2))
 
     plt.tight_layout()
-    plt.savefig(output_dir / f"{prefix}_error.png", dpi=150)
+
+    # Save PNG
+    png_path = output_dir / f"{prefix}_error.png"
+    plt.savefig(png_path, dpi=300, bbox_inches='tight')
+
+    # Save EPS
+    if save_eps:
+        eps_path = output_dir / f"{prefix}_error.eps"
+        plt.savefig(eps_path, format='eps', bbox_inches='tight')
+
     plt.close(fig2)
 
     # Figure 3: Frequency Response Comparison
