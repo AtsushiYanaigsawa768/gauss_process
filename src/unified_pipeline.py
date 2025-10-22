@@ -1028,8 +1028,18 @@ def plot_gp_results(omega: np.ndarray, y_true: np.ndarray, y_pred: np.ndarray,
 
 def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
                    G_std_real: Optional[np.ndarray], G_std_imag: Optional[np.ndarray],
-                   output_prefix: Path):
-    """Plot complex-valued GP results (Nyquist only)."""
+                   output_prefix: Path, save_eps: bool = True):
+    """Plot complex-valued GP results (Nyquist only).
+
+    Args:
+        omega: Angular frequencies
+        G_true: True complex transfer function
+        G_pred: Predicted complex transfer function
+        G_std_real: Standard deviation of real part
+        G_std_imag: Standard deviation of imaginary part
+        output_prefix: Output file prefix (without extension)
+        save_eps: If True, save EPS files in addition to PNG (default: True)
+    """
     # Configure plot style for consistent appearance
     configure_plot_style()
 
@@ -1056,7 +1066,16 @@ def plot_complex_gp(omega: np.ndarray, G_true: np.ndarray, G_pred: np.ndarray,
     ax.axis('equal')
     ax.tick_params(labelsize=24, width=2.5, length=10)
     plt.tight_layout()
-    plt.savefig(str(output_prefix) + '_nyquist_gp.png', dpi=300, bbox_inches='tight')
+
+    # Save PNG
+    png_path = str(output_prefix) + '_nyquist_gp.png'
+    plt.savefig(png_path, dpi=300, bbox_inches='tight')
+
+    # Save EPS
+    if save_eps:
+        eps_path = str(output_prefix) + '_nyquist_gp.eps'
+        plt.savefig(eps_path, format='eps', bbox_inches='tight')
+
     plt.close(fig)
 
 
@@ -2183,8 +2202,9 @@ def run_comprehensive_test(mat_files: List[str], output_base_dir: str = 'test_ou
 
     # Test configurations
     # GP kernels
-    kernels = ['rbf', 'matern', 'matern12', 'matern32', 'matern52', 'rq', 'exp', 'tc', 'dc', 'di',
-               'ss1', 'ss2', 'sshf', 'stable_spline']
+    # kernels = ['rbf', 'matern', 'matern12', 'matern32', 'matern52', 'rq', 'exp', 'tc', 'dc', 'di',
+    #            'ss1', 'ss2', 'sshf', 'stable_spline']
+    kernels = [ 'matern52']
     # Classical methods
     classical_methods = ['nls', 'ls']
 
