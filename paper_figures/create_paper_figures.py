@@ -14,14 +14,14 @@ from pathlib import Path
 import glob
 
 # 論文用の設定
-plt.rcParams['font.size'] = 14
-plt.rcParams['axes.labelsize'] = 16
-plt.rcParams['axes.titlesize'] = 18
-plt.rcParams['xtick.labelsize'] = 14
-plt.rcParams['ytick.labelsize'] = 14
-plt.rcParams['legend.fontsize'] = 14
-plt.rcParams['figure.titlesize'] = 20
-plt.rcParams['lines.linewidth'] = 1.5
+plt.rcParams['font.size'] = 18
+plt.rcParams['axes.labelsize'] = 26
+plt.rcParams['axes.titlesize'] = 28
+plt.rcParams['xtick.labelsize'] = 18
+plt.rcParams['ytick.labelsize'] = 18
+plt.rcParams['legend.fontsize'] = 18
+plt.rcParams['figure.titlesize'] = 28
+plt.rcParams['lines.linewidth'] = 2.5
 
 
 def load_mat_data(mat_file):
@@ -90,20 +90,20 @@ def create_paper_figure(t, u, y, output_prefix, title_suffix=""):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     # Left subplot: Input signal
-    ax1.plot(t, u, 'b-', linewidth=1.5)
-    ax1.set_xlabel('Time [s]', fontsize=16)
-    ax1.set_ylabel('Input Signal', fontsize=16)
-    ax1.set_title('Input', fontsize=18)
+    ax1.plot(t, u, 'b-', linewidth=2.5)
+    ax1.set_xlabel('Time [s]', fontsize=26)
+    ax1.set_ylabel('Input Signal', fontsize=26)
+    ax1.set_title('Input', fontsize=28, fontweight='bold')
     ax1.grid(True, alpha=0.3)
-    ax1.tick_params(labelsize=14)
+    ax1.tick_params(labelsize=18)
 
     # Right subplot: Output signal
-    ax2.plot(t, y, 'r-', linewidth=1.5)
-    ax2.set_xlabel('Time [s]', fontsize=16)
-    ax2.set_ylabel('Output Signal', fontsize=16)
-    ax2.set_title('Output', fontsize=18)
+    ax2.plot(t, y, 'r-', linewidth=2.5)
+    ax2.set_xlabel('Time [s]', fontsize=26)
+    ax2.set_ylabel('Output Signal [rad]', fontsize=26)
+    ax2.set_title('Output', fontsize=28, fontweight='bold')
     ax2.grid(True, alpha=0.3)
-    ax2.tick_params(labelsize=14)
+    ax2.tick_params(labelsize=18)
     plt.tight_layout()
 
     # Save as EPS (vector format, high quality for papers)
@@ -126,12 +126,26 @@ def main():
     print("Creating Publication-Quality Figures")
     print("="*70)
 
-    output_dir = Path('paper_figures')
-    output_dir.mkdir(exist_ok=True)
+    # Determine project root directory based on script location
+    script_path = Path(__file__).resolve()
+    if script_path.parent.name == 'paper_figures':
+        # Script is inside paper_figures folder
+        project_root = script_path.parent.parent
+        output_dir = script_path.parent
+        print(f"Running from paper_figures folder")
+        print(f"Project root: {project_root}")
+    else:
+        # Script is in project root
+        project_root = script_path.parent
+        output_dir = project_root / 'paper_figures'
+        output_dir.mkdir(exist_ok=True)
+        print(f"Running from project root")
+
+    print(f"Output directory: {output_dir}")
 
     # Figure 1: From input folder
     print("\n[1/2] Processing input folder MAT file...")
-    input_folder = Path('input')
+    input_folder = project_root / 'input'
     mat_files = sorted(input_folder.glob('*.mat'))
 
     if not mat_files:
@@ -154,7 +168,7 @@ def main():
 
     # Figure 2: From Wave.mat
     print("\n[2/2] Processing Wave.mat...")
-    wave_file = Path('Wave.mat')
+    wave_file = project_root / 'Wave.mat'
 
     if not wave_file.exists():
         print("  [ERROR] Wave.mat not found")

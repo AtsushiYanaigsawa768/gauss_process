@@ -32,3 +32,4 @@ PAPER_MODE_IMPLEMENTATION.md
 test_output_fourier
 paper_figures/temp_frf_datapoints
 paper_figures/temp_frf
+paper_figures/gp_results
